@@ -18,8 +18,7 @@ on:
         type: string
 
 env:
-  SCITER_RUST_VERSION: "1.75"
-  RUST_VERSION: "1.75"
+  RUST_VERSION: "stable"
   LLVM_VERSION: "15.0.6"
   FLUTTER_VERSION: "3.24.5"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
@@ -210,23 +209,42 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
       - name: Replace Flutter engine with RustDesk custom engine
+        shell: pwsh
         run: |
           flutter precache --windows
+          $flutterRoot = $env:FLUTTER_ROOT
+          if (-not $flutterRoot) {
+            $flutterCmd = (Get-Command flutter -ErrorAction SilentlyContinue).Source
+            if ($flutterCmd) { $flutterRoot = Split-Path (Split-Path $flutterCmd) }
+          }
+          Write-Host "Flutter root: $flutterRoot"
+          $engineDir = Join-Path $flutterRoot "bin\cache\artifacts\engine\windows-x64-release"
+          Write-Host "Engine dir: $engineDir"
+          New-Item -ItemType Directory -Force -Path $engineDir | Out-Null
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
-          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release -Force
+          Copy-Item -Path "windows-x64-release\*" -Destination $engineDir -Force -Recurse
 
       - name: Patch Flutter dropdown
-        shell: bash
+        continue-on-error: true
+        shell: pwsh
         run: |
-          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter))) || true
-          cd $(dirname $(dirname $(which flutter)))
-          [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff || true
+          $patchFile = ".github\patches\flutter_3.24.4_dropdown_menu_enableFilter.diff"
+          if (-not (Test-Path $patchFile)) { Write-Host "Patch not found, skipping"; exit 0 }
+          $flutterRoot = $env:FLUTTER_ROOT
+          if (-not $flutterRoot) {
+            $flutterCmd = (Get-Command flutter -ErrorAction SilentlyContinue).Source
+            if ($flutterCmd) { $flutterRoot = Split-Path (Split-Path $flutterCmd) }
+          }
+          Copy-Item $patchFile $flutterRoot -Force
+          Push-Location $flutterRoot
+          git apply (Split-Path $patchFile -Leaf) 2>&1 | Write-Host
+          Pop-Location
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: ${{ env.SCITER_RUST_VERSION }}
+          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
           components: "rustfmt"
 
@@ -242,12 +260,11 @@ jobs:
           doNotCache: false
 
       - name: Install vcpkg dependencies
-        shell: bash
+        shell: pwsh
         env:
           VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
         run: |
-          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static \
-            --x-install-root="$VCPKG_ROOT/installed"
+          & "$env:VCPKG_ROOT\vcpkg" install --triplet x64-windows-static --x-install-root="$env:VCPKG_ROOT\installed"
 
       - name: Patch icon
         if: env.ICON_URL != ''
@@ -412,6 +429,16 @@ jobs:
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{"progress":"Компилируется RustDesk (Flutter + Rust, ~30-50 мин)..."}'
+
+      - name: Diagnostics
+        shell: pwsh
+        run: |
+          Write-Host "=== Rust ===" ; rustc --version ; cargo --version
+          Write-Host "=== Flutter ===" ; flutter --version
+          Write-Host "=== Python ===" ; python --version
+          Write-Host "=== FLUTTER_ROOT ===" ; Write-Host $env:FLUTTER_ROOT
+          Write-Host "=== VCPKG_ROOT ===" ; Write-Host $env:VCPKG_ROOT
+          Write-Host "=== build.py flags ===" ; python3 .\build.py --help 2>&1 | Select-String "vram|portable|hwcodec" | Select-Object -First 10
 
       - name: Build RustDesk
         run: |
