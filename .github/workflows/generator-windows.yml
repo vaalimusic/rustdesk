@@ -108,7 +108,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Установка зависимостей...\"}"
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Installing dependencies...\"}"
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -362,7 +362,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"progress":"Компилируется RustDesk (Flutter + Rust, ~30-50 мин)..."}'
+            -d '{"progress":"Building RustDesk (Rust + Flutter, 30-50 min)..."}'
 
       - name: Build RustDesk
         run: |
@@ -503,7 +503,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"progress":"Сборка завершена, создаётся установщик..."}'
+            -d '{"progress":"Packaging installer..."}'
 
       - name: Build self-extracted portable exe
         shell: bash
@@ -547,7 +547,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"progress":"Загружается на сервер..."}'
+            -d '{"progress":"Uploading to server..."}'
 
       - name: Upload to server
         shell: bash
@@ -572,4 +572,4 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"status\":\"failed\",\"message\":\"Сборка упала. Логи: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
+            -d "{\"status\":\"failed\",\"message\":\"Build failed. Logs: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
