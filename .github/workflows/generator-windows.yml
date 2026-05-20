@@ -33,14 +33,27 @@ jobs:
       version: ${{ inputs.version || 'master' }}
 
   build-RustDeskTempTopMostWindow:
-    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
-    with:
-      upload-artifact: true
-      target: windows-2022
-      configuration: Release
-      platform: x64
-      target_version: Windows10
-    secrets: inherit
+    name: Build RustDeskTempTopMostWindow
+    runs-on: windows-2022
+    steps:
+      - name: Checkout RustDeskTempTopMostWindow
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/RustDeskTempTopMostWindow
+          ref: master
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        run: |
+          msbuild RustDeskTempTopMostWindow.sln /p:Configuration=Release /p:Platform=x64 /p:TargetVersion=Windows10
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@master
+        with:
+          name: topmostwindow-artifacts
+          path: x64/Release/
 
   build-windows:
     name: Build Windows Client
