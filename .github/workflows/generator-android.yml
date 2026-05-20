@@ -81,7 +81,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"status":"running","message":"Android build started on GitHub Actions"}'
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Android: установка зависимостей (arm64/armv7/x86_64)...\"}"
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
@@ -241,6 +241,13 @@ jobs:
           popd
           sed -i '/ic_launcher_background/d' ./flutter/android/app/src/main/res/values/colors.xml
 
+      - name: Report progress - compiling
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): компилируется Rust библиотека...\"}"
+
       - name: Build Rust library
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -268,6 +275,13 @@ jobs:
                  ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
               ;;
           esac
+
+      - name: Report progress - flutter build
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): сборка Flutter APK...\"}"
 
       - name: Build APK
         shell: bash
@@ -330,10 +344,18 @@ jobs:
             exit 1
           fi
 
+      - name: Report success arch
+        if: success()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): APK загружен ✓\"}"
+
       - name: Report failure
         if: failure()
         shell: bash
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"status\":\"failed\",\"message\":\"Android build failed (${{ matrix.job.arch }}) on runner ${{ runner.name }}\"}"
+            -d "{\"status\":\"failed\",\"message\":\"Ошибка сборки Android (${{ matrix.job.arch }}). Runner: ${{ runner.name }}\"}"

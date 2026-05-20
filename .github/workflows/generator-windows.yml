@@ -58,7 +58,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"status":"running","message":"Build started on GitHub Actions runner"}'
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Установка зависимостей...\"}"
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
@@ -114,6 +114,13 @@ jobs:
             sed -i "s/\"RustDesk\"/\"${APP_NAME}\"/g" Cargo.toml || true
           fi
 
+      - name: Report status - building
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Компилируется Rust (~20-30 мин)..."}'
+
       - name: Build RustDesk
         shell: cmd
         run: |
@@ -141,7 +148,7 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"status":"running","message":"Build complete, uploading binary"}'
+            -d '{"progress":"Сборка завершена, загружается на сервер..."}'
 
       - name: Upload binary to Everty Desk
         shell: bash
@@ -164,18 +171,10 @@ jobs:
             fi
           fi
 
-      - name: Report success
-        if: success()
-        shell: bash
-        run: |
-          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"status":"success","message":"Build completed and uploaded"}'
-
       - name: Report failure
         if: failure()
         shell: bash
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"status\":\"failed\",\"message\":\"Build failed on runner ${{ runner.name }}\"}"
+            -d "{\"status\":\"failed\",\"message\":\"Сборка упала на шаге: ${{ github.job }}. Runner: ${{ runner.name }}\"}"
