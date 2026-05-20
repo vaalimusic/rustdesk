@@ -32,32 +32,9 @@ jobs:
     with:
       version: ${{ inputs.version || 'master' }}
 
-  build-RustDeskTempTopMostWindow:
-    name: Build RustDeskTempTopMostWindow
-    runs-on: windows-2022
-    steps:
-      - name: Checkout RustDeskTempTopMostWindow
-        uses: actions/checkout@v4
-        with:
-          repository: rustdesk/RustDeskTempTopMostWindow
-          ref: master
-
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Build
-        run: |
-          msbuild RustDeskTempTopMostWindow.sln /p:Configuration=Release /p:Platform=x64 /p:TargetVersion=Windows10
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@master
-        with:
-          name: topmostwindow-artifacts
-          path: x64/Release/
-
   build-windows:
     name: Build Windows Client
-    needs: [generate-bridge, build-RustDeskTempTopMostWindow]
+    needs: [generate-bridge]
     runs-on: windows-2022
     timeout-minutes: 120
 
@@ -453,11 +430,18 @@ jobs:
         run: |
           cp custom_.txt ./rustdesk/custom_.txt || true
 
-      - name: Download RustDeskTempTopMostWindow artifacts
-        uses: actions/download-artifact@master
-        with:
-          name: topmostwindow-artifacts
-          path: "./rustdesk"
+      - name: Download RustDeskTempTopMostWindow
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $releases = Invoke-RestMethod "https://api.github.com/repos/rustdesk/RustDeskTempTopMostWindow/releases/latest"
+          $asset = $releases.assets | Where-Object { $_.name -like "*.exe" } | Select-Object -First 1
+          if ($asset) {
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "./rustdesk/RustDeskTempTopMostWindow.exe"
+            Write-Host "Downloaded $($asset.name)"
+          } else {
+            Write-Host "No exe asset found, skipping"
+          }
 
       - name: Find Runner.res
         continue-on-error: true
