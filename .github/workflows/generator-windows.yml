@@ -11,6 +11,11 @@ on:
         description: 'Everty Desk API server base URL'
         required: false
         type: string
+      version:
+        description: 'RustDesk version tag or master'
+        required: false
+        default: 'master'
+        type: string
 
 env:
   LLVM_VERSION: "15.0.6"
