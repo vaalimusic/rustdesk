@@ -49,11 +49,10 @@ jobs:
           GENURL="${{ inputs.genurl || secrets.GENURL }}"
           TOKEN="${{ inputs.token }}"
 
-          RESPONSE=$(curl -s -f "${GENURL}/admin/client-build/get-params?token=${TOKEN}")
-          if [ $? -ne 0 ]; then
-            echo "Failed to fetch build params"
+          RESPONSE=$(curl -s -f --retry 3 --retry-delay 5 "${GENURL}/admin/client-build/get-params?token=${TOKEN}") || {
+            echo "Failed to fetch build params from ${GENURL}"
             exit 1
-          fi
+          }
 
           echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"                    >> $GITHUB_ENV
           echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"             >> $GITHUB_ENV
