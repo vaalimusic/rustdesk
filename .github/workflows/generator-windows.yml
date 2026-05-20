@@ -4,37 +4,55 @@ on:
   workflow_dispatch:
     inputs:
       token:
-        description: 'Build token (from Everty Desk server)'
+        description: 'Build token (from server)'
         required: true
         type: string
       genurl:
-        description: 'Everty Desk API server base URL'
+        description: 'API server base URL'
         required: false
         type: string
       version:
-        description: 'RustDesk version tag or master'
+        description: 'RustDesk version tag (e.g. 1.3.1) or "master"'
         required: false
         default: 'master'
         type: string
 
 env:
-  LLVM_VERSION: "15.0.6"
-  FLUTTER_VERSION: "3.19.6"
+  SCITER_RUST_VERSION: "1.75"
   RUST_VERSION: "1.75"
-  CARGO_NDK_VERSION: "3.1.2"
-  TAG_NAME: "nightly"
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VERSION: "${{ inputs.version || 'master' }}"
 
 jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+    with:
+      version: ${{ inputs.version || 'master' }}
+
+  build-RustDeskTempTopMostWindow:
+    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
+    with:
+      upload-artifact: true
+      target: windows-2022
+      configuration: Release
+      platform: x64
+      target_version: Windows10
+    secrets: inherit
+
   build-windows:
     name: Build Windows Client
+    needs: [generate-bridge, build-RustDeskTempTopMostWindow]
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
-      - name: Checkout RustDesk
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Fetch build params from Everty Desk
+      - name: Fetch build params
         id: params
         shell: bash
         run: |
@@ -48,132 +66,298 @@ jobs:
             exit 1
           fi
 
-          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')" >> $GITHUB_ENV
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"        >> $GITHUB_ENV
           echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')" >> $GITHUB_ENV
-          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')" >> $GITHUB_ENV
-          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')" >> $GITHUB_ENV
-          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')" >> $GITHUB_ENV
-          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')" >> $GITHUB_ENV
-          echo "CUSTOM_TXT=$(echo $RESPONSE | jq -r '.custom')" >> $GITHUB_ENV
-          echo "BUILD_TOKEN=${TOKEN}" >> $GITHUB_ENV
-          echo "GENURL_VALUE=${GENURL}" >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"       >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"           >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                 >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"     >> $GITHUB_ENV
+          echo "CUSTOM_TXT=$(echo $RESPONSE | jq -r '.custom')"         >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"   >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                    >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                  >> $GITHUB_ENV
 
-      - name: Report status - running
+      - name: Report running
         shell: bash
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Установка зависимостей...\"}"
 
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout RustDesk source (tag)
+        if: env.VERSION != 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: refs/tags/${{ env.VERSION }}
+          submodules: recursive
+
+      - name: Checkout RustDesk source (master)
+        if: env.VERSION == 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@master
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install ImageMagick
+        run: |
+          choco install -y imagemagick.app --no-progress
+          Get-ChildItem -Path "${env:ProgramFiles}" | % { $_.FullName } | Select-String -Pattern "[\/\\]ImageMagick[^\/\\]*$" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Fix flutter_gpu_texture_renderer
+        shell: bash
+        run: |
+          sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.lock || true
+          sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.yaml || true
+
+      - name: Set server, key, API server
+        continue-on-error: true
+        shell: bash
+        run: |
+          [ -n "${RDSERVER}" ]    && sed -i -e "s|rs-ny.rustdesk.com|${RDSERVER}|" ./libs/hbb_common/src/config.rs
+          [ -n "${RDKEY}" ]       && sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${RDKEY}|" ./libs/hbb_common/src/config.rs
+          [ -n "${API_SERVER}" ]  && sed -i -e "s|https://admin.rustdesk.com|${API_SERVER}|" ./src/common.rs
+
+      - name: Rename app
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|description = \"RustDesk Remote Desktop\"|description = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|ProductName = \"RustDesk\"|ProductName = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|FileDescription = \"RustDesk Remote Desktop\"|FileDescription = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|OriginalFilename = \"rustdesk.exe\"|OriginalFilename = \"${APP_NAME}.exe\"|" ./Cargo.toml
+          sed -i -e "s|description = \"RustDesk Remote Desktop\"|description = \"${APP_NAME}\"|" ./libs/portable/Cargo.toml
+          sed -i -e "s|ProductName = \"RustDesk\"|ProductName = \"${APP_NAME}\"|" ./libs/portable/Cargo.toml
+          sed -i -e "s|const APP_PREFIX: &str = \"rustdesk\";|const APP_PREFIX: \&str = \"${APP_NAME}\";|" ./libs/portable/src/main.rs
+          sed -i -e "s|\"RustDesk Remote Desktop\"|\"${APP_NAME}\"|" ./flutter/windows/runner/Runner.rc
+          sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|" ./flutter/windows/runner/Runner.rc
+          sed -i -e "s|\"rustdesk.exe\"|\"${FILE_NAME}.exe\"|" ./flutter/windows/runner/Runner.rc
+          find ./src/lang -name "*.rs" -exec sed -i -e "s|RustDesk|${APP_NAME}|" {} \;
+
+      - name: Set company name
+        if: env.COMPANY_NAME != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./Cargo.toml || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./libs/portable/Cargo.toml || true
+          sed -i -e "s|Copyright © 2025 Purslane Ltd|Copyright © 2025 ${COMPANY_NAME}|" ./flutter/windows/runner/Runner.rc || true
+
+      - name: Apply allowCustom patch
+        continue-on-error: true
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 1
+          max_attempts: 3
+          shell: pwsh
+          command: |
+            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py -OutFile allowCustom.py
+            python allowCustom.py
+
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
           version: ${{ env.LLVM_VERSION }}
 
-      - name: Install flutter
-        uses: subosito/flutter-action@v2
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+
+      - name: Replace Flutter engine with RustDesk custom engine
+        run: |
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch Flutter dropdown
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter))) || true
+          cd $(dirname $(dirname $(which flutter)))
+          [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff || true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ env.SCITER_RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
           components: "rustfmt"
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          prefix-key: windows-2022
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: "b5ec7f26c7ad1e6c89b7bc14c8da78069e5b88e6"
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
 
-      - name: Install vcpkg packages
+      - name: Install vcpkg dependencies
+        shell: bash
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
         run: |
-          vcpkg install --triplet x64-windows-static libvpx libyuv opus aom
+          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Patch icon
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${env:ICON_URL}" -OutFile ./res/icon.png
+          mv ./res/icon.ico ./res/icon.ico.bak
+          mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
+          magick ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico
+          cp ./res/icon.ico ./res/tray-icon.ico
+          magick ./res/icon.png -resize 32x32 ./res/32x32.png
+          magick ./res/icon.png -resize 64x64 ./res/64x64.png
+          magick ./res/icon.png -resize 128x128 ./res/128x128.png
+          magick ./res/128x128.png -resize 200% ./res/128x128@2x.png
+
+      - name: Replace Flutter icons
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          cd ./flutter
+          flutter pub get
+          flutter pub run flutter_launcher_icons
+          cd ..
+
+      - name: Remove new version notification
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|updateUrl.isNotEmpty|false|' ./flutter/lib/desktop/pages/desktop_home_page.dart
+
+      - name: Report progress - building
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Компилируется RustDesk (Flutter + Rust, ~30-50 мин)..."}'
+
+      - name: Build RustDesk
+        run: |
+          python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk
+
+          # USB virtual display driver
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath . -Force
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse -ErrorAction SilentlyContinue
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat" -ErrorAction SilentlyContinue
+          mv -Force .\usbmmidd_v2 ./rustdesk
 
       - name: Write custom.txt
         shell: bash
         run: |
-          echo "${CUSTOM_TXT}" > src/custom.txt
-          echo "custom.txt content:"
-          cat src/custom.txt
+          echo -n "${CUSTOM_TXT}" > ./rustdesk/custom_.txt
 
-      - name: Write app name config
+      - name: Download RustDeskTempTopMostWindow artifacts
+        uses: actions/download-artifact@master
+        with:
+          name: topmostwindow-artifacts
+          path: "./rustdesk"
+
+      - name: Find Runner.res
+        continue-on-error: true
         shell: bash
         run: |
-          if [ -n "${APP_NAME}" ]; then
-            sed -i "s/RustDesk/${APP_NAME}/g" src/lang/en.rs || true
-            sed -i "s/\"RustDesk\"/\"${APP_NAME}\"/g" Cargo.toml || true
+          runner_res=$(find . -name "Runner.res")
+          if [ -n "$runner_res" ]; then
+            cp "$runner_res" ./libs/portable/Runner.res
           fi
 
-      - name: Report status - building
+      - name: Report progress - packaging
         shell: bash
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"progress":"Компилируется Rust (~20-30 мин)..."}'
+            -d '{"progress":"Сборка завершена, создаётся установщик..."}'
 
-      - name: Build RustDesk
-        shell: cmd
+      - name: Build self-extracted portable exe
+        shell: bash
         run: |
-          python3 res\inline-sciter.py
-          cargo build --release --features inline
+          APPNAME="${APP_NAME:-RustDesk}"
+          mv "./rustdesk/rustdesk.exe" "./rustdesk/${APPNAME}.exe" || true
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e "../../rustdesk/${APPNAME}.exe"
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/rustdesk.exe"
 
-      - name: Create installer
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build MSI installer
+        continue-on-error: true
+        run: |
+          $myappname = "${env:APP_NAME}" -replace '\s','_'
+          if (-not $myappname) { $myappname = "rustdesk" }
+          cp "rustdesk/${env:APP_NAME}.exe" "rustdesk/${myappname}.exe" -ErrorAction SilentlyContinue
+          pushd ./res/msi
+          python preprocess.py --app-name "$myappname" --arp -d ../../rustdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          cp ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk.msi
+          popd
+
+      - name: Rename output files
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk-client}"
-          cp target/release/rustdesk.exe "${FNAME}.exe"
+          mv "./SignOutput/rustdesk.exe" "./SignOutput/${FNAME}.exe" || true
+          mv "./SignOutput/rustdesk.msi" "./SignOutput/${FNAME}.msi" || true
+          ls -la ./SignOutput/
 
-          # Basic NSIS installer if available
-          if command -v makensis &> /dev/null; then
-            makensis /DAPP_NAME="${APP_NAME:-RustDesk}" \
-                     /DCOMPANY_NAME="${COMPANY_NAME}" \
-                     /DFILE_NAME="${FNAME}" \
-                     res/nsis/installer.nsi || true
-          fi
-
-          ls -la *.exe 2>/dev/null || true
-
-      - name: Report status - uploading
+      - name: Report progress - uploading
         shell: bash
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"progress":"Сборка завершена, загружается на сервер..."}'
+            -d '{"progress":"Загружается на сервер..."}'
 
-      - name: Upload binary to Everty Desk
+      - name: Upload to server
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk-client}"
-          EXE_FILE="${FNAME}.exe"
+          EXE="./SignOutput/${FNAME}.exe"
+          MSI="./SignOutput/${FNAME}.msi"
 
-          if [ -f "${EXE_FILE}" ]; then
+          if [ -f "${EXE}" ]; then
             curl -s -f -X POST \
               "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
-              -F "file=@${EXE_FILE}"
-            echo "Uploaded ${EXE_FILE}"
-          else
-            echo "EXE not found: ${EXE_FILE}"
-            # try target/release/rustdesk.exe
-            if [ -f "target/release/rustdesk.exe" ]; then
-              curl -s -f -X POST \
-                "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
-                -F "file=@target/release/rustdesk.exe"
-            fi
+              -F "file=@${EXE}"
+            echo "Uploaded ${EXE}"
+          fi
+          if [ -f "${MSI}" ]; then
+            curl -s -f -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${MSI}" || true
+            echo "Uploaded ${MSI}"
           fi
 
       - name: Report failure
@@ -182,4 +366,4 @@ jobs:
         run: |
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"status\":\"failed\",\"message\":\"Сборка упала на шаге: ${{ github.job }}. Runner: ${{ runner.name }}\"}"
+            -d "{\"status\":\"failed\",\"message\":\"Сборка упала. Runner: ${{ runner.name }}. Логи: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
