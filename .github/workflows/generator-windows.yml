@@ -220,6 +220,7 @@ jobs:
           sed -i -e "s|https://rustdesk.com/download|${DOWNLOAD_LINK}|" ./flutter/lib/mobile/pages/connection_page.dart
 
       - name: Allow custom.txt + remove setup server tip
+        continue-on-error: true
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 1
