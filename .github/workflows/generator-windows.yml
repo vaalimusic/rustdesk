@@ -79,16 +79,55 @@ jobs:
             exit 1
           fi
 
-          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"        >> $GITHUB_ENV
-          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')" >> $GITHUB_ENV
-          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"       >> $GITHUB_ENV
-          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"           >> $GITHUB_ENV
-          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                 >> $GITHUB_ENV
-          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"     >> $GITHUB_ENV
-          echo "CUSTOM_TXT=$(echo $RESPONSE | jq -r '.custom')"         >> $GITHUB_ENV
-          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"   >> $GITHUB_ENV
-          echo "BUILD_TOKEN=${TOKEN}"                                    >> $GITHUB_ENV
-          echo "GENURL_VALUE=${GENURL}"                                  >> $GITHUB_ENV
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"              >> $GITHUB_ENV
+          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"       >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"             >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                 >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                       >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"           >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"         >> $GITHUB_ENV
+          echo "LOGO_URL=$(echo $RESPONSE | jq -r '.logo_url // ""')"         >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                          >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                        >> $GITHUB_ENV
+
+          # Parse custom_config JSON
+          CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
+          echo "CUSTOM_JSON=${CUSTOM}"                                         >> $GITHUB_ENV
+          echo "CONN_TYPE=$(echo $CUSTOM | jq -r '.conn_type // "both"')"     >> $GITHUB_ENV
+          echo "DISABLE_INSTALL=$(echo $CUSTOM | jq -r '.disable_installation // false')" >> $GITHUB_ENV
+          echo "DISABLE_SETTINGS=$(echo $CUSTOM | jq -r '.disable_settings // false')"    >> $GITHUB_ENV
+          echo "PERM_PASSWORD=$(echo $CUSTOM | jq -r '.permanent_password // ""')"        >> $GITHUB_ENV
+          echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // ""')"                       >> $GITHUB_ENV
+          echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // ""')"             >> $GITHUB_ENV
+          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix // false')"                  >> $GITHUB_ENV
+          echo "CYCLE_MONITOR=$(echo $CUSTOM | jq -r '.cycle_monitor // false')"          >> $GITHUB_ENV
+          echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
+          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif // true')" >> $GITHUB_ENV
+          echo "SETTINGS_MODE=$(echo $CUSTOM | jq -r '.settings_mode // "default"')"     >> $GITHUB_ENV
+          echo "ACCESS_MODE=$(echo $CUSTOM | jq -r '.access_mode // "custom"')"           >> $GITHUB_ENV
+          echo "APPROVE_MODE=$(echo $CUSTOM | jq -r '.approve_mode // "password-click"')" >> $GITHUB_ENV
+          echo "VERIF_METHOD=$(echo $CUSTOM | jq -r '.verification_method // "use-both-passwords"')" >> $GITHUB_ENV
+          echo "HIDE_CM=$(echo $CUSTOM | jq -r '.hide_cm // false')"                      >> $GITHUB_ENV
+          echo "REMOVE_WALLPAPER=$(echo $CUSTOM | jq -r '.remove_wallpaper // true')"     >> $GITHUB_ENV
+          echo "THEME=$(echo $CUSTOM | jq -r '.theme // "system"')"                       >> $GITHUB_ENV
+          echo "THEME_MODE=$(echo $CUSTOM | jq -r '.theme_mode // "default"')"            >> $GITHUB_ENV
+          echo "ENABLE_LAN=$(echo $CUSTOM | jq -r '.enable_lan_discovery // true')"       >> $GITHUB_ENV
+          echo "AUTO_DISCONNECT=$(echo $CUSTOM | jq -r '.allow_auto_disconnect // false')" >> $GITHUB_ENV
+          echo "ENABLE_KB=$(echo $CUSTOM | jq -r '.enable_keyboard // true')"             >> $GITHUB_ENV
+          echo "ENABLE_CB=$(echo $CUSTOM | jq -r '.enable_clipboard // true')"            >> $GITHUB_ENV
+          echo "ENABLE_FT=$(echo $CUSTOM | jq -r '.enable_file_transfer // true')"        >> $GITHUB_ENV
+          echo "ENABLE_AUDIO=$(echo $CUSTOM | jq -r '.enable_audio // true')"             >> $GITHUB_ENV
+          echo "ENABLE_TCP=$(echo $CUSTOM | jq -r '.enable_tcp // true')"                 >> $GITHUB_ENV
+          echo "ENABLE_RESTART=$(echo $CUSTOM | jq -r '.enable_remote_restart // true')"  >> $GITHUB_ENV
+          echo "ENABLE_RECORD=$(echo $CUSTOM | jq -r '.enable_recording // true')"        >> $GITHUB_ENV
+          echo "ENABLE_BLOCK=$(echo $CUSTOM | jq -r '.enable_blocking_input // true')"    >> $GITHUB_ENV
+          echo "ENABLE_REMMOD=$(echo $CUSTOM | jq -r '.enable_remote_modification // false')" >> $GITHUB_ENV
+          echo "ENABLE_DIRECT=$(echo $CUSTOM | jq -r '.enable_direct_ip // false')"       >> $GITHUB_ENV
+          echo "ENABLE_PRINTER=$(echo $CUSTOM | jq -r '.enable_printer // true')"         >> $GITHUB_ENV
+          echo "ENABLE_CAMERA=$(echo $CUSTOM | jq -r '.enable_camera // true')"           >> $GITHUB_ENV
+          echo "ENABLE_TERMINAL=$(echo $CUSTOM | jq -r '.enable_terminal // true')"       >> $GITHUB_ENV
+          echo "DEFAULT_MANUAL=$(echo $CUSTOM | jq -r '.default_manual // ""')"           >> $GITHUB_ENV
+          echo "OVERRIDE_MANUAL=$(echo $CUSTOM | jq -r '.override_manual // ""')"         >> $GITHUB_ENV
 
       - name: Report running
         shell: bash
@@ -257,11 +296,138 @@ jobs:
           flutter pub run flutter_launcher_icons
           cd ..
 
+      - name: Patch logo
+        if: env.LOGO_URL != ''
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${env:LOGO_URL}" -OutFile ./flutter/assets/logo.png -ErrorAction SilentlyContinue
+
       - name: Remove new version notification
+        if: env.REMOVE_NOTIF == 'true'
         continue-on-error: true
         shell: bash
         run: |
           sed -i -e 's|updateUrl.isNotEmpty|false|' ./flutter/lib/desktop/pages/desktop_home_page.dart
+
+      - name: Apply delay fix patch
+        if: env.DELAY_FIX == 'true'
+        continue-on-error: true
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 1
+          max_attempts: 3
+          shell: pwsh
+          command: |
+            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/delayFix.py -OutFile delayFix.py
+            python delayFix.py
+
+      - name: Apply cycleMonitor patch
+        if: env.CYCLE_MONITOR == 'true'
+        continue-on-error: true
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 1
+          max_attempts: 3
+          shell: pwsh
+          command: |
+            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/cycleMonitor.py -OutFile cycleMonitor.py
+            python cycleMonitor.py
+
+      - name: Apply xOffline patch
+        if: env.X_OFFLINE == 'true'
+        continue-on-error: true
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 1
+          max_attempts: 3
+          shell: pwsh
+          command: |
+            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/xOffline.py -OutFile xOffline.py
+            python xOffline.py
+
+      - name: Generate custom_.txt
+        shell: python
+        run: |
+          import os, json
+
+          def yn(v):
+              return 'Y' if str(v).lower() in ('true','yes','y','1') else 'N'
+
+          cfg = {}
+
+          conn_type = os.environ.get('CONN_TYPE','both')
+          if conn_type != 'both':
+              cfg['conn-type'] = conn_type
+
+          if yn(os.environ.get('DISABLE_INSTALL','false')) == 'Y':
+              cfg['disable-installation'] = 'Y'
+          if yn(os.environ.get('DISABLE_SETTINGS','false')) == 'Y':
+              cfg['disable-settings'] = 'Y'
+
+          perm_pass = os.environ.get('PERM_PASSWORD','')
+          if perm_pass:
+              cfg['password'] = perm_pass
+
+          url_link = os.environ.get('URL_LINK','')
+          if url_link:
+              cfg['url-link'] = url_link
+
+          dl_link = os.environ.get('DOWNLOAD_LINK','')
+          if dl_link:
+              cfg['download-link'] = dl_link
+
+          cfg['enable-lan-discovery'] = yn(os.environ.get('ENABLE_LAN','true'))
+          cfg['allow-auto-disconnect'] = yn(os.environ.get('AUTO_DISCONNECT','false'))
+
+          mode_key = 'override-settings' if os.environ.get('SETTINGS_MODE') == 'override' else 'default-settings'
+          theme_key = 'override-settings' if os.environ.get('THEME_MODE') == 'override' else 'default-settings'
+
+          cfg['override-settings'] = {}
+          cfg['default-settings'] = {}
+
+          theme = os.environ.get('THEME','system')
+          if theme != 'system':
+              cfg[theme_key]['theme'] = theme
+
+          cfg[mode_key]['access-mode']                     = os.environ.get('ACCESS_MODE','custom')
+          cfg[mode_key]['enable-keyboard']                 = yn(os.environ.get('ENABLE_KB','true'))
+          cfg[mode_key]['enable-clipboard']                = yn(os.environ.get('ENABLE_CB','true'))
+          cfg[mode_key]['enable-file-transfer']            = yn(os.environ.get('ENABLE_FT','true'))
+          cfg[mode_key]['enable-audio']                    = yn(os.environ.get('ENABLE_AUDIO','true'))
+          cfg[mode_key]['enable-tunnel']                   = yn(os.environ.get('ENABLE_TCP','true'))
+          cfg[mode_key]['enable-remote-restart']           = yn(os.environ.get('ENABLE_RESTART','true'))
+          cfg[mode_key]['enable-record-session']           = yn(os.environ.get('ENABLE_RECORD','true'))
+          cfg[mode_key]['enable-block-input']              = yn(os.environ.get('ENABLE_BLOCK','true'))
+          cfg[mode_key]['allow-remote-config-modification']= yn(os.environ.get('ENABLE_REMMOD','false'))
+          cfg[mode_key]['direct-server']                   = yn(os.environ.get('ENABLE_DIRECT','false'))
+          cfg[mode_key]['verification-method']             = os.environ.get('VERIF_METHOD','use-both-passwords')
+          cfg[mode_key]['approve-mode']                    = os.environ.get('APPROVE_MODE','password-click')
+          cfg[mode_key]['allow-hide-cm']                   = yn(os.environ.get('HIDE_CM','false'))
+          cfg[mode_key]['allow-remove-wallpaper']          = yn(os.environ.get('REMOVE_WALLPAPER','true'))
+          cfg[mode_key]['enable-remote-printer']           = yn(os.environ.get('ENABLE_PRINTER','true'))
+          cfg[mode_key]['enable-camera']                   = yn(os.environ.get('ENABLE_CAMERA','true'))
+          cfg[mode_key]['enable-terminal']                 = yn(os.environ.get('ENABLE_TERMINAL','true'))
+
+          # Manual key=value lines
+          for line in os.environ.get('DEFAULT_MANUAL','').splitlines():
+              if '=' in line:
+                  k, v = line.split('=', 1)
+                  cfg['default-settings'][k.strip()] = v.strip()
+
+          for line in os.environ.get('OVERRIDE_MANUAL','').splitlines():
+              if '=' in line:
+                  k, v = line.split('=', 1)
+                  cfg['override-settings'][k.strip()] = v.strip()
+
+          # Clean empty sub-dicts
+          if not cfg['default-settings']:
+              del cfg['default-settings']
+          if not cfg['override-settings']:
+              del cfg['override-settings']
+
+          with open('custom_.txt', 'w') as f:
+              json.dump(cfg, f)
 
       - name: Report progress - building
         shell: bash
@@ -282,10 +448,10 @@ jobs:
           Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat" -ErrorAction SilentlyContinue
           mv -Force .\usbmmidd_v2 ./rustdesk
 
-      - name: Write custom.txt
+      - name: Copy custom_.txt to build dir
         shell: bash
         run: |
-          echo -n "${CUSTOM_TXT}" > ./rustdesk/custom_.txt
+          cp custom_.txt ./rustdesk/custom_.txt || true
 
       - name: Download RustDeskTempTopMostWindow artifacts
         uses: actions/download-artifact@master
