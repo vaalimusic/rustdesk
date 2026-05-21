@@ -63,7 +63,7 @@ class AgentService {
     if (_apiServer == null || _machineId == null) return;
     try {
       await http.post(
-        Uri.parse('$_apiServer/api/agent/heartbeat'),
+        Uri.parse('$_apiServer/admin/agent/heartbeat'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'machine_id': _machineId,
@@ -79,7 +79,7 @@ class AgentService {
   Future<void> _checkInbox() async {
     if (_apiServer == null || _machineId == null) return;
     try {
-      final uri = Uri.parse('$_apiServer/api/agent/inbox').replace(queryParameters: {
+      final uri = Uri.parse('$_apiServer/admin/agent/inbox').replace(queryParameters: {
         'machine_id': _machineId!,
         'service_key': _serviceKey ?? '',
       });
@@ -97,7 +97,7 @@ class AgentService {
   Future<void> _ackNotification(String id) async {
     try {
       await http.post(
-        Uri.parse('$_apiServer/api/agent/notification/$id/ack?machine_id=$_machineId'),
+        Uri.parse('$_apiServer/admin/agent/notification/$id/ack?machine_id=$_machineId'),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
   }
@@ -105,7 +105,7 @@ class AgentService {
   Future<void> _voteNotification(String id, String vote) async {
     try {
       await http.post(
-        Uri.parse('$_apiServer/api/agent/notification/$id/vote?machine_id=$_machineId'),
+        Uri.parse('$_apiServer/admin/agent/notification/$id/vote?machine_id=$_machineId'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'vote': vote}),
       ).timeout(const Duration(seconds: 10));
@@ -161,7 +161,7 @@ class AgentService {
     if (_apiServer == null || _machineId == null) return;
     try {
       await http.post(
-        Uri.parse('$_apiServer/api/agent/support-request'),
+        Uri.parse('$_apiServer/admin/agent/support-request'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'machine_id': _machineId,
