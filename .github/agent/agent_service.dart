@@ -89,11 +89,16 @@ class AgentService {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = (data['items'] as List<dynamic>?) ?? [];
       for (final item in items) {
-        await _ackNotification(item['id'].toString());
         if (item['type'] == 'config_update') {
-          await _applyConfigUpdate(item as Map<String, dynamic>);
+          _withContext((ctx) async {
+            await _ackNotification(item['id'].toString());
+            _applyConfigUpdate(item as Map<String, dynamic>);
+          });
         } else {
-          _showItem(item as Map<String, dynamic>);
+          _withContext((ctx) async {
+            await _ackNotification(item['id'].toString());
+            _showItemWithCtx(ctx, item as Map<String, dynamic>);
+          });
         }
       }
     } catch (_) {}
@@ -188,7 +193,19 @@ class AgentService {
   BuildContext? _findContext() {
     final ctx = navigatorKey.currentContext;
     if (ctx != null) return ctx;
-    return WidgetsBinding.instance.rootElement;
+    final root = WidgetsBinding.instance.rootElement;
+    if (root == null) return null;
+    BuildContext? found;
+    void visit(Element e) {
+      if (found != null) return;
+      if (e.widget is Navigator) {
+        found = e;
+        return;
+      }
+      e.visitChildren(visit);
+    }
+    visit(root);
+    return found;
   }
 
   void _withContext(void Function(BuildContext ctx) action, {int retries = 30}) {
