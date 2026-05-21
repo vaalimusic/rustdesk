@@ -18,23 +18,21 @@ class AgentService {
   final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
   String? _apiServer;
+  String? _serviceKey;
   String? _machineId;
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
 
   // Called from main() after app boots.
-  Future<void> initialize({required String apiServer}) async {
+  Future<void> initialize({required String apiServer, String serviceKey = ''}) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
+    _serviceKey = serviceKey;
     _machineId = await _getOrCreateMachineId();
 
-    // First heartbeat after a short delay to let the app settle.
     Future.delayed(const Duration(seconds: 5), _sendHeartbeat);
-
-    // Subsequent heartbeats every 5 minutes.
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) => _sendHeartbeat());
 
-    // Inbox check: first after 15 seconds, then every 3 minutes.
     Future.delayed(const Duration(seconds: 15), _checkInbox);
     _inboxTimer = Timer.periodic(const Duration(minutes: 3), (_) => _checkInbox());
   }
@@ -69,6 +67,7 @@ class AgentService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'machine_id': _machineId,
+          'service_key': _serviceKey ?? '',
           'hostname': Platform.localHostname,
           'os': Platform.operatingSystem,
           'os_version': Platform.operatingSystemVersion,
@@ -80,9 +79,11 @@ class AgentService {
   Future<void> _checkInbox() async {
     if (_apiServer == null || _machineId == null) return;
     try {
-      final resp = await http.get(
-        Uri.parse('$_apiServer/api/agent/inbox?machine_id=$_machineId'),
-      ).timeout(const Duration(seconds: 10));
+      final uri = Uri.parse('$_apiServer/api/agent/inbox').replace(queryParameters: {
+        'machine_id': _machineId!,
+        'service_key': _serviceKey ?? '',
+      });
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return;
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = (data['items'] as List<dynamic>?) ?? [];
@@ -156,7 +157,6 @@ class AgentService {
     );
   }
 
-  // Call this from a "Request Help" button in the UI.
   Future<void> sendSupportRequest({String message = ''}) async {
     if (_apiServer == null || _machineId == null) return;
     try {
@@ -165,6 +165,7 @@ class AgentService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'machine_id': _machineId,
+          'service_key': _serviceKey ?? '',
           'hostname': Platform.localHostname,
           'message': message,
         }),
@@ -172,7 +173,6 @@ class AgentService {
     } catch (_) {}
   }
 
-  // Shows a dialog where user can type a message before requesting help.
   void showSupportRequestDialog(BuildContext ctx) {
     final controller = TextEditingController();
     showDialog(
