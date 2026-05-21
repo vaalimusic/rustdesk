@@ -1,0 +1,231 @@
+name: Generator macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      token:
+        description: 'Build token (from server)'
+        required: true
+        type: string
+      genurl:
+        description: 'API server base URL'
+        required: false
+        type: string
+      version:
+        description: 'RustDesk version tag (e.g. 1.4.6) or "master"'
+        required: false
+        default: 'master'
+        type: string
+
+env:
+  RUST_VERSION: "1.81"
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VERSION: "${{ inputs.version || 'master' }}"
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+    with:
+      version: ${{ inputs.version || 'master' }}
+
+  build-macos:
+    name: Build macOS Intel x86_64
+    needs: generate-bridge
+    runs-on: macos-13
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch build params
+        id: params
+        shell: bash
+        run: |
+          GENURL="${{ inputs.genurl || secrets.GENURL }}"
+          TOKEN="${{ inputs.token }}"
+
+          RESPONSE=$(curl -s -f "${GENURL}/admin/client-build/get-params?token=${TOKEN}") || {
+            echo "Failed to fetch build params from ${GENURL}"
+            exit 1
+          }
+
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"              >> $GITHUB_ENV
+          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"      >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"            >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                      >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"          >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"        >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                         >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                       >> $GITHUB_ENV
+
+          CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')" >> $GITHUB_ENV
+          echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"   >> $GITHUB_ENV
+
+      - name: Inject Smart Agent
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cp .github/agent/agent_service.dart ./flutter/lib/agent_service.dart
+
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" > ./flutter/lib/agent_constants.dart
+
+          sed -i '' "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
+          sed -i '' "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey).ignore();|" ./flutter/lib/main.dart
+
+          sed -i '' "s|navigatorKey: globalKey,|navigatorKey: AgentService.instance.navigatorKey,|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+          sed -i '' "s|PopupMenuButton<String>|// Agent support button injected\nIconButton(icon: const Icon(Icons.support_agent), tooltip: 'Запросить помощь', onPressed: () => AgentService.instance.showSupportRequestDialog(context)),\nPopupMenuButton<String>|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+
+      - name: Report running
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"macOS: установка зависимостей...\"}"
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install nasm yasm jq
+
+      - name: Checkout RustDesk source (tag)
+        if: env.VERSION != 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: refs/tags/${{ env.VERSION }}
+          submodules: recursive
+
+      - name: Checkout RustDesk source (master)
+        if: env.VERSION == 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@master
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Setup vcpkg with GitHub Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet x64-osx \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-apple-darwin
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rustdesk-lib-cache-macos-intel
+
+      - name: Patch icon
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          curl -fsSL "${ICON_URL}" -o ./res/icon.png || wget -T 30 -t 2 -O ./res/icon.png "${ICON_URL}"
+          convert ./res/icon.png -resize 32x32 ./res/32x32.png || true
+          convert ./res/icon.png -resize 64x64 ./res/64x64.png || true
+          convert ./res/icon.png -resize 128x128 ./res/128x128.png || true
+          convert ./res/128x128.png -resize 200% ./res/128x128@2x.png || true
+
+      - name: Replace Flutter icons
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          pushd ./flutter
+          flutter pub get
+          dart run flutter_launcher_icons
+          popd
+
+      - name: Set server, key, and API server
+        continue-on-error: true
+        shell: bash
+        run: |
+          [ -n "${RDSERVER}" ]   && sed -i '' -e "s|rs-ny.rustdesk.com|${RDSERVER}|" ./libs/hbb_common/src/config.rs
+          [ -n "${RDKEY}" ]      && sed -i '' -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${RDKEY}|" ./libs/hbb_common/src/config.rs
+          [ -n "${API_SERVER}" ] && sed -i '' -e "s|https://admin.rustdesk.com|${API_SERVER}|" ./src/common.rs
+
+      - name: Rename app
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          find ./src/lang -name "*.rs" -exec sed -i '' "s|RustDesk|${APP_NAME}|g" {} \;
+          sed -i '' "s|title: 'RustDesk'|title: '${APP_NAME}'|" ./flutter/lib/main.dart
+          [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i '' "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
+
+      - name: Report progress - building
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"macOS: компилируется (Rust + Flutter, ~40-70 мин)..."}'
+
+      - name: Build macOS DMG
+        shell: bash
+        run: |
+          export VCPKG_ROOT=/opt/artifacts/vcpkg
+          python3 build.py --flutter --dmg
+
+      - name: Report progress - uploading
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"macOS: загружается на сервер..."}'
+
+      - name: Upload DMG to server
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          DMG=$(find . -maxdepth 8 -name "*.dmg" | grep -v vcpkg | head -1)
+          if [ -z "$DMG" ]; then
+            echo "No .dmg file found"
+            exit 1
+          fi
+          cp "$DMG" "${FNAME}.dmg"
+          curl -s -f -X POST \
+            "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+            -F "file=@${FNAME}.dmg"
+          echo "Uploaded ${FNAME}.dmg"
+
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"failed\",\"message\":\"Ошибка сборки macOS. Logs: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
