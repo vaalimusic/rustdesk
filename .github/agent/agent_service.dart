@@ -222,6 +222,14 @@ class AgentService {
     _withContext((ctx) => _showItemWithCtx(ctx, item));
   }
 
+  String _absoluteUrl(String url) {
+    if (url.isEmpty) return url;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    final base = _apiServer ?? '';
+    if (url.startsWith('/')) return base + url;
+    return '$base/$url';
+  }
+
   void _showItemWithCtx(BuildContext ctx, Map<String, dynamic> item) {
     final id = item['id'].toString();
     final title = item['title'] as String? ?? '';
@@ -230,7 +238,7 @@ class AgentService {
     final options = (item['options'] as List<dynamic>?)?.cast<String>() ?? [];
     final link = (item['link'] as String?) ?? '';
     final linkLabel = (item['link_label'] as String?) ?? '';
-    final imageUrl = (item['image_url'] as String?) ?? '';
+    final imageUrl = _absoluteUrl((item['image_url'] as String?) ?? '');
     final severity = (item['severity'] as String?) ?? 'info';
 
     final accent = _severityColor(severity);
