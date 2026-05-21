@@ -73,7 +73,7 @@ jobs:
           echo "PERM_PASSWORD=$(echo $CUSTOM | jq -r '.permanent_password // ""')"        >> $GITHUB_ENV
           echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // "https://rustdesk.com"')"   >> $GITHUB_ENV
           echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // "https://rustdesk.com/download"')" >> $GITHUB_ENV
-          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix // false')"                  >> $GITHUB_ENV
+          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix // true')"                   >> $GITHUB_ENV
           echo "CYCLE_MONITOR=$(echo $CUSTOM | jq -r '.cycle_monitor // false')"          >> $GITHUB_ENV
           echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
           echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif // true')" >> $GITHUB_ENV
@@ -192,6 +192,9 @@ jobs:
           [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
           find ./src/lang -name "*.rs" -exec sed -i -e "s|RustDesk|${APP_NAME}|" {} \;
           sed -i -e "s|RustDesk|${APP_NAME}|" ./res/msi/Package/License.rtf || true
+          # Patch APP_NAME in hbb_common — controls %APPDATA% folder, install dir and registry keys
+          sed -i -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
+          sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true
 
       - name: Fix registry if app name has a space
         if: contains(env.APP_NAME, ' ')

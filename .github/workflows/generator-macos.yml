@@ -186,6 +186,9 @@ jobs:
           find ./src/lang -name "*.rs" -exec sed -i '' "s|RustDesk|${APP_NAME}|g" {} \;
           sed -i '' "s|title: 'RustDesk'|title: '${APP_NAME}'|" ./flutter/lib/main.dart
           [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i '' "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
+          # Patch APP_NAME in hbb_common — controls config folder and app data paths
+          sed -i '' -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
+          sed -i '' -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true
 
       - name: Report progress - building
         shell: bash
