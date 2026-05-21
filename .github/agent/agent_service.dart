@@ -8,7 +8,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'generated_bridge.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -113,41 +113,60 @@ class AgentService {
       final server = (body['server'] as String?) ?? '';
       final key = (body['key'] as String?) ?? '';
       final apiServer = (body['api_server'] as String?) ?? '';
-
-      if (server.isNotEmpty) {
-        await bind.mainSetOption(key: 'custom-rendezvous-server', value: server);
-      }
-      if (key.isNotEmpty) {
-        await bind.mainSetOption(key: 'key', value: key);
-      }
-      if (apiServer.isNotEmpty) {
-        await bind.mainSetOption(key: 'api-server', value: apiServer);
-      }
-
-      _showRestartDialog();
+      _showConfigUpdateDialog(server: server, key: key, apiServer: apiServer);
     } catch (_) {}
   }
 
-  void _showRestartDialog() {
+  void _showConfigUpdateDialog({required String server, required String key, required String apiServer}) {
     final ctx = navigatorKey.currentContext;
     if (ctx == null) return;
+    final lines = <Widget>[];
+    if (server.isNotEmpty) lines.add(_configRow('ID/Relay сервер', server));
+    if (key.isNotEmpty) lines.add(_configRow('Публичный ключ', key));
+    if (apiServer.isNotEmpty) lines.add(_configRow('API сервер', apiServer));
     showDialog(
       context: ctx,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('Обновление настроек'),
-        content: const Text(
-          'Администратор обновил параметры подключения. '
-          'Перезапустите приложение, чтобы изменения вступили в силу.',
+        title: const Text('Обновление настроек подключения'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Администратор обновил настройки сервера. Скопируйте значения и вставьте их в Настройки → Сеть.'),
+              const SizedBox(height: 12),
+              ...lines,
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Позже'),
+            child: const Text('Закрыть'),
           ),
-          FilledButton(
-            onPressed: () => exit(0),
-            child: const Text('Закрыть приложение'),
+        ],
+      ),
+    );
+  }
+
+  Widget _configRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(child: SelectableText(value, style: const TextStyle(fontSize: 13))),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                tooltip: 'Копировать',
+                onPressed: () => Clipboard.setData(ClipboardData(text: value)),
+              ),
+            ],
           ),
         ],
       ),
