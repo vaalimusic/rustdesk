@@ -225,6 +225,12 @@ jobs:
         run: |
           echo -n "${CUSTOM_TXT}" > ./flutter/assets/custom_.txt
 
+      - name: Fix connection delay (address book)
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+
       - name: Remove scam alert on Android
         continue-on-error: true
         shell: bash
