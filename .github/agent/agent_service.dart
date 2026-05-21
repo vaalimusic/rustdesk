@@ -228,40 +228,134 @@ class AgentService {
     final body = item['body'] as String? ?? '';
     final type = item['type'] as String? ?? 'banner';
     final options = (item['options'] as List<dynamic>?)?.cast<String>() ?? [];
+    final link = (item['link'] as String?) ?? '';
+    final linkLabel = (item['link_label'] as String?) ?? '';
+    final imageUrl = (item['image_url'] as String?) ?? '';
+    final severity = (item['severity'] as String?) ?? 'info';
+
+    final accent = _severityColor(severity);
+    final accentIcon = _severityIcon(severity);
 
     showDialog(
       context: ctx,
       barrierDismissible: type != 'poll',
       builder: (_) => AlertDialog(
-        title: Text(title),
-        content: Column(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        contentPadding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+        titlePadding: EdgeInsets.zero,
+        title: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (body.isNotEmpty) Text(body),
-            if (type == 'poll' && options.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...options.map((opt) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: SizedBox(
+            if (imageUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                child: Image.network(
+                  imageUrl,
+                  height: 140,
                   width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      _voteNotification(id, opt);
-                      Navigator.of(ctx).pop();
-                    },
-                    child: Text(opt),
-                  ),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
-              )),
-            ],
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
+              child: Row(
+                children: [
+                  if (type == 'banner') Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: Icon(accentIcon, color: accent, size: 24),
+                  ),
+                  Expanded(
+                    child: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
-        actions: type != 'poll'
-            ? [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK'))]
-            : [],
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (body.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(body, style: const TextStyle(fontSize: 14, height: 1.45)),
+                ),
+              if (type == 'poll' && options.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ...options.map((opt) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        _voteNotification(id, opt);
+                        Navigator.of(ctx).pop();
+                      },
+                      child: Text(opt),
+                    ),
+                  ),
+                )),
+              ],
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 0, 16, 8),
+        actions: type == 'poll'
+            ? []
+            : [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Закрыть'),
+                ),
+                if (link.isNotEmpty)
+                  FilledButton.icon(
+                    onPressed: () {
+                      _openExternalLink(link);
+                      Navigator.of(ctx).pop();
+                    },
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: Text(linkLabel.isNotEmpty ? linkLabel : 'Открыть'),
+                  ),
+              ],
       ),
     );
+  }
+
+  Color _severityColor(String severity) {
+    switch (severity) {
+      case 'success': return const Color(0xFF16A34A);
+      case 'warning': return const Color(0xFFEA580C);
+      case 'error':   return const Color(0xFFDC2626);
+      default:        return const Color(0xFF2563EB);
+    }
+  }
+
+  IconData _severityIcon(String severity) {
+    switch (severity) {
+      case 'success': return Icons.check_circle_rounded;
+      case 'warning': return Icons.warning_amber_rounded;
+      case 'error':   return Icons.error_rounded;
+      default:        return Icons.info_rounded;
+    }
+  }
+
+  Future<void> _openExternalLink(String url) async {
+    try {
+      // Copy to clipboard as a robust fallback (Windows: opens via shell, anywhere: user can paste)
+      await Clipboard.setData(ClipboardData(text: url));
+      if (Platform.isWindows) {
+        await Process.start('cmd', ['/c', 'start', '', url], runInShell: true);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', [url]);
+      } else if (Platform.isLinux) {
+        await Process.start('xdg-open', [url]);
+      }
+    } catch (_) {}
   }
 
   Future<void> sendSupportRequest({String message = ''}) async {
