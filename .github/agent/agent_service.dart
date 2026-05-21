@@ -8,6 +8,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/generated_bridge.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -89,7 +90,11 @@ class AgentService {
       final items = (data['items'] as List<dynamic>?) ?? [];
       for (final item in items) {
         await _ackNotification(item['id'].toString());
-        _showItem(item as Map<String, dynamic>);
+        if (item['type'] == 'config_update') {
+          await _applyConfigUpdate(item as Map<String, dynamic>);
+        } else {
+          _showItem(item as Map<String, dynamic>);
+        }
       }
     } catch (_) {}
   }
@@ -100,6 +105,53 @@ class AgentService {
         Uri.parse('$_apiServer/admin/agent/notification/$id/ack?machine_id=$_machineId'),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
+  }
+
+  Future<void> _applyConfigUpdate(Map<String, dynamic> item) async {
+    try {
+      final body = jsonDecode(item['body'] as String? ?? '{}') as Map<String, dynamic>;
+      final server = (body['server'] as String?) ?? '';
+      final key = (body['key'] as String?) ?? '';
+      final apiServer = (body['api_server'] as String?) ?? '';
+
+      if (server.isNotEmpty) {
+        await bind.mainSetOption(key: 'custom-rendezvous-server', value: server);
+      }
+      if (key.isNotEmpty) {
+        await bind.mainSetOption(key: 'key', value: key);
+      }
+      if (apiServer.isNotEmpty) {
+        await bind.mainSetOption(key: 'api-server', value: apiServer);
+      }
+
+      _showRestartDialog();
+    } catch (_) {}
+  }
+
+  void _showRestartDialog() {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+    showDialog(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Обновление настроек'),
+        content: const Text(
+          'Администратор обновил параметры подключения. '
+          'Перезапустите приложение, чтобы изменения вступили в силу.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Позже'),
+          ),
+          FilledButton(
+            onPressed: () => exit(0),
+            child: const Text('Закрыть приложение'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _voteNotification(String id, String vote) async {
