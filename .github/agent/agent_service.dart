@@ -118,8 +118,10 @@ class AgentService {
   }
 
   void _showConfigUpdateDialog({required String server, required String key, required String apiServer}) {
-    final ctx = navigatorKey.currentContext;
-    if (ctx == null) return;
+    _withContext((ctx) => _showConfigUpdateDialogWithCtx(ctx, server: server, key: key, apiServer: apiServer));
+  }
+
+  void _showConfigUpdateDialogWithCtx(BuildContext ctx, {required String server, required String key, required String apiServer}) {
     final lines = <Widget>[];
     if (server.isNotEmpty) lines.add(_configRow('ID/Relay сервер', server));
     if (key.isNotEmpty) lines.add(_configRow('Публичный ключ', key));
@@ -183,10 +185,27 @@ class AgentService {
     } catch (_) {}
   }
 
-  void _showItem(Map<String, dynamic> item) {
+  BuildContext? _findContext() {
     final ctx = navigatorKey.currentContext;
-    if (ctx == null) return;
+    if (ctx != null) return ctx;
+    return WidgetsBinding.instance.rootElement;
+  }
 
+  void _withContext(void Function(BuildContext ctx) action, {int retries = 30}) {
+    final ctx = _findContext();
+    if (ctx != null) {
+      action(ctx);
+      return;
+    }
+    if (retries <= 0) return;
+    Future.delayed(const Duration(seconds: 2), () => _withContext(action, retries: retries - 1));
+  }
+
+  void _showItem(Map<String, dynamic> item) {
+    _withContext((ctx) => _showItemWithCtx(ctx, item));
+  }
+
+  void _showItemWithCtx(BuildContext ctx, Map<String, dynamic> item) {
     final id = item['id'].toString();
     final title = item['title'] as String? ?? '';
     final body = item['body'] as String? ?? '';
