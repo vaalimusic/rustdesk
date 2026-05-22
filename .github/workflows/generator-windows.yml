@@ -199,6 +199,11 @@ jobs:
           [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
           find ./src/lang -name "*.rs" -exec sed -i -e "s|RustDesk|${APP_NAME}|" {} \;
           sed -i -e "s|RustDesk|${APP_NAME}|" ./res/msi/Package/License.rtf || true
+          # Also override get_app_name() body in src/common.rs — most reliable place
+          sed -i "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs || true
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
+          fi
           # Patch APP_NAME in hbb_common — controls %APPDATA% folder, install dir and registry keys
           sed -i -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
           sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true

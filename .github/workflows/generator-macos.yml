@@ -202,6 +202,11 @@ jobs:
           # Patch APP_NAME in hbb_common — controls config folder and app data paths
           sed -i '' -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
           sed -i '' -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true
+          # Also override get_app_name() body in src/common.rs (reliable: lives in our repo)
+          sed -i '' "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs || true
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i '' -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
+          fi
 
       - name: Fix connection delay (address book)
         continue-on-error: true

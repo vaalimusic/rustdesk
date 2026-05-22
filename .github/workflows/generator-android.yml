@@ -222,6 +222,19 @@ jobs:
           sed -i "s|\"RustDesk\"|\"${APP_NAME}\"|" ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt
           sed -i "s|\"RustDesk Service|\"${APP_NAME} Service|" ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt
           find ./src/lang -name "*.rs" -exec sed -i "s|RustDesk|${APP_NAME}|g" {} \;
+          # ── Critical: override get_app_name() in src/common.rs ──
+          # The Android home page title is shown via Text(bind.mainGetAppNameSync())
+          # which round-trips to Rust's get_app_name() → hbb_common::config::APP_NAME.
+          # Patching hbb_common (a submodule) is unreliable; instead replace the
+          # body of get_app_name() directly in our repo so it returns a literal
+          # string at compile time.
+          sed -i "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs
+          # Also patch hbb_common as a fallback if submodule is present
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs
+            sed -i -E "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|g" ./libs/hbb_common/src/config.rs
+          fi
+          echo "✓ get_app_name() patched → '${APP_NAME}'"
 
       - name: Set Android app ID
         if: env.ANDROID_APP_ID != 'com.carriez.flutter_hbb'
