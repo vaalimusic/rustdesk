@@ -142,8 +142,14 @@ jobs:
 
           sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
           sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey).ignore();|" ./flutter/lib/main.dart
-          sed -i "s|navigatorKey: globalKey,|navigatorKey: AgentService.instance.navigatorKey,|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
-          sed -i "s|PopupMenuButton<String>|// Agent support button injected\nIconButton(icon: const Icon(Icons.support_agent), tooltip: 'Запросить помощь', onPressed: () => AgentService.instance.showSupportRequestDialog(context)),\nPopupMenuButton<String>|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+          # navigatorKey lives in main.dart, not desktop_home_page.dart
+          sed -i "s|navigatorKey: globalKey,|navigatorKey: AgentService.instance.navigatorKey,|g" ./flutter/lib/main.dart || true
+          sed -i "s|navigatorKey: Get.key,|navigatorKey: AgentService.instance.navigatorKey,|g" ./flutter/lib/main.dart || true
+          # Support-request button: inject after stable anchor buildTip(context),
+          if [ -f ./flutter/lib/desktop/pages/desktop_home_page.dart ]; then
+            sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+            echo "✓ Support-request button injected into desktop_home_page.dart"
+          fi
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2
