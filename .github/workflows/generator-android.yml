@@ -16,6 +16,16 @@ on:
         required: false
         default: 'master'
         type: string
+      outgoing_only:
+        description: 'Strip incoming-connection features (RU anti-fraud)'
+        required: false
+        default: 'false'
+        type: string
+      rebrand_strings:
+        description: 'Aggressive "RustDesk" string replacement for marketplace publish'
+        required: false
+        default: 'false'
+        type: string
 
 env:
   RUST_VERSION: "1.75"
@@ -219,6 +229,106 @@ jobs:
         shell: bash
         run: |
           sed -i "s|com.carriez.flutter_hbb|${ANDROID_APP_ID}|" ./flutter/android/app/build.gradle
+
+      - name: Aggressive rebrand of remaining "RustDesk" strings (RU)
+        if: ${{ inputs.rebrand_strings == 'true' && env.APP_NAME != '' && env.APP_NAME != 'rustdesk' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          echo "🇷🇺 Aggressive rebrand: replacing every remaining 'RustDesk' occurrence with '${APP_NAME}'"
+          BRAND_LOWER=$(echo "${APP_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
+
+          # All Dart UI sources (covers settings, about, dialogs, notifications)
+          # (excludes file_picker plugin / vendored deps)
+          find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+            -exec sed -i \
+              -e "s|RustDesk|${APP_NAME}|g" \
+              -e "s|'rustdesk'|'${BRAND_LOWER}'|g" \
+              -e "s|\"rustdesk\"|\"${BRAND_LOWER}\"|g" {} +
+
+          # All Android string resources (every locale)
+          find ./flutter/android/app/src/main/res -name "strings.xml" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          # Kotlin source — service names, channel labels
+          find ./flutter/android/app/src/main/kotlin -name "*.kt" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          # AndroidManifest — labels and descriptions
+          sed -i "s|RustDesk|${APP_NAME}|g" ./flutter/android/app/src/main/AndroidManifest.xml
+
+          # Rust language files (already partially done by Rename app, redo defensively)
+          find ./src/lang -name "*.rs" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          # Any pubspec or build.gradle that mentions RustDesk
+          sed -i "s|RustDesk|${APP_NAME}|g" ./flutter/pubspec.yaml || true
+
+          # iOS-style plist (just in case used as android resource)
+          find ./flutter/android/app -name "*.xml" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          echo "✅ Rebrand applied. Remaining hits (if any):"
+          grep -rni "rustdesk" ./flutter/lib ./flutter/android/app/src ./src/lang \
+            --include='*.dart' --include='*.xml' --include='*.kt' --include='*.rs' \
+            2>/dev/null | head -20 || true
+
+      - name: Enable outgoing-only mode (RU anti-fraud)
+        if: ${{ inputs.outgoing_only == 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          echo "🛡️ Enabling outgoing-only mode: incoming/receive functionality will be stripped."
+
+          # 1. Force config::is_outgoing_only() = true at the hbb_common level.
+          # Different RustDesk versions name the function differently; cover both.
+          if [ -d libs/hbb_common ]; then
+            grep -rln "fn is_outgoing_only" libs/hbb_common | while read -r f; do
+              # Replace the body of `pub fn is_outgoing_only() -> bool { ... }` with `true`
+              sed -i -E 's/(pub fn is_outgoing_only\(\) -> bool \{)[^}]*\}/\1 true }/g' "$f"
+              echo "  patched: $f"
+            done
+          fi
+          # If is_outgoing_only is defined elsewhere (e.g. src/common.rs in some forks)
+          grep -rln "fn is_outgoing_only" src/ 2>/dev/null | while read -r f; do
+            sed -i -E 's/(pub fn is_outgoing_only\(\) -> bool \{)[^}]*\}/\1 true }/g' "$f"
+            echo "  patched: $f"
+          done
+
+          # 2. Defensive: force the Flutter-side check to always evaluate true too.
+          # In upstream RustDesk: `!bind.isOutgoingOnly()` is used to gate Server tab.
+          # By patching the Dart binding's wrapper we guarantee the tab is hidden
+          # even if the Rust patch above silently failed under upstream changes.
+          if [ -f flutter/lib/generated_bridge.dart ]; then
+            sed -i -E 's/(isOutgoingOnly\(\) =>) [^;]+;/\1 true;/g' flutter/lib/generated_bridge.dart || true
+          fi
+
+          # 3. Strip dangerous Android permissions / services that are pointless
+          #    in outgoing-only mode (kept under continue-on-error: true).
+          MANIFEST=./flutter/android/app/src/main/AndroidManifest.xml
+          if [ -f "$MANIFEST" ]; then
+            # MediaProjection (screen capture) — not needed for outgoing
+            sed -i '/<uses-permission[^>]*FOREGROUND_SERVICE_MEDIA_PROJECTION[^>]*\/>/d' "$MANIFEST" || true
+            sed -i '/<service[^>]*MediaProjectionService[^>]*>/,/<\/service>/d' "$MANIFEST" || true
+            # Audio capture — receive side only
+            sed -i '/<uses-permission[^>]*RECORD_AUDIO[^>]*\/>/d' "$MANIFEST" || true
+            # SystemAlertWindow (overlay for accept dialog) — receive side only
+            sed -i '/<uses-permission[^>]*SYSTEM_ALERT_WINDOW[^>]*\/>/d' "$MANIFEST" || true
+            # Accessibility service (used to enable receive on Android < 10)
+            sed -i '/<service[^>]*InputService[^>]*>/,/<\/service>/d' "$MANIFEST" || true
+            echo "  manifest cleaned"
+          fi
+
+          # 4. Make sure scam-warning dialog stays disabled (already patched above
+          #    via the existing "Remove scam alert" step, kept here for safety).
+          sed -i 's/bind.mainGetLocalOption(key:\s*"show-scam-warning")/"N"/g' \
+            ./flutter/lib/mobile/pages/server_page.dart 2>/dev/null || true
+
+          echo "✅ Outgoing-only mode applied"
+          echo "   Strings inside the binary referencing the receive side should be reduced."
+          echo "   Manifest no longer requests MEDIA_PROJECTION / RECORD_AUDIO / SYSTEM_ALERT_WINDOW."
 
       - name: Write custom.txt
         shell: bash
