@@ -416,8 +416,30 @@ class AgentService {
           'target_machine_id': targetMachineId,
           'target_rustdesk_id': targetRustdeskId,
         }),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(kHttpTimeout);
+      // After sending a help request, the user is waiting for an answer.
+      // Burst-poll inbox for 60 seconds (every 5 sec) so the reply
+      // notification (✓ Принят / ⏰ Через 10 мин / Отклонён) lands quickly.
+      _startBurstPolling();
     } catch (_) {}
+  }
+
+  Timer? _burstTimer;
+  /// Aggressive polling window — used after the user sends a support request
+  /// or right after they pressed any action on a support_ping. Polls inbox
+  /// every 5 seconds for 60 seconds, then drops back to normal interval.
+  void _startBurstPolling() {
+    _burstTimer?.cancel();
+    int ticks = 0;
+    _burstTimer = Timer.periodic(const Duration(seconds: 5), (t) {
+      _checkInbox();
+      ticks++;
+      if (ticks >= 12) {
+        // 12 * 5 sec = 60 sec
+        t.cancel();
+        _burstTimer = null;
+      }
+    });
   }
 
   Future<List<Map<String, dynamic>>> fetchOperators() async {
@@ -498,7 +520,10 @@ class AgentService {
           'request_id': requestId,
           'action': action,
         }),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(kHttpTimeout);
+      // Burst-poll briefly — the server may also send follow-up notifications
+      // (e.g. confirmation snackbar) that the operator should see right away.
+      _startBurstPolling();
     } catch (_) {}
   }
 
