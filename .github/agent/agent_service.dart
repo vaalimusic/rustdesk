@@ -406,6 +406,56 @@ class AgentService {
     }
   }
 
+  // ─── Local help-request history ───────────────────────────────────────
+  // Stored in the same app support directory as agent_id. Last 10 entries.
+  //
+  // For generic (unbranded) EvertyDesk clients with no operator list,
+  // history is the only way to remember whom the user contacted before.
+
+  Future<File?> _historyFile() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return File('${dir.path}${Platform.pathSeparator}support_history.json');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<Map<String, String>>> loadSupportHistory() async {
+    try {
+      final f = await _historyFile();
+      if (f == null || !await f.exists()) return [];
+      final raw = await f.readAsString();
+      final list = (jsonDecode(raw) as List<dynamic>).cast<Map<String, dynamic>>();
+      return list.map((e) => e.map((k, v) => MapEntry(k, v?.toString() ?? ''))).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveSupportHistoryEntry({
+    required String targetId,
+    required String label,
+  }) async {
+    if (targetId.isEmpty) return;
+    try {
+      final existing = await loadSupportHistory();
+      // De-duplicate by targetId — move existing to the top.
+      existing.removeWhere((e) => e['target_id'] == targetId);
+      existing.insert(0, {
+        'target_id': targetId,
+        'label': label,
+        'at': DateTime.now().toIso8601String(),
+      });
+      // Keep at most 10
+      while (existing.length > 10) existing.removeLast();
+      final f = await _historyFile();
+      if (f != null) {
+        await f.writeAsString(jsonEncode(existing));
+      }
+    } catch (_) {}
+  }
+
   Future<void> respondToSupportRequest(int requestId, String action) async {
     if (_apiServer == null || _machineId == null) return;
     try {
@@ -501,96 +551,136 @@ class AgentService {
   }
 
   void showSupportRequestDialog(BuildContext ctx) {
-    final controller = TextEditingController();
+    final messageCtl = TextEditingController();
+    final manualIdCtl = TextEditingController();
+
     final ValueNotifier<Map<String, dynamic>?> selectedOperator = ValueNotifier(null);
     final ValueNotifier<List<Map<String, dynamic>>> operators = ValueNotifier([]);
-    final ValueNotifier<bool> loading = ValueNotifier(true);
+    final ValueNotifier<bool> loadingOperators = ValueNotifier(true);
+    final ValueNotifier<List<Map<String, String>>> history = ValueNotifier([]);
+    final ValueNotifier<bool> useManualMode = ValueNotifier(false);
 
-    // Load operators in background
+    // Load operator list + history in background
     fetchOperators().then((list) {
       operators.value = list;
-      loading.value = false;
+      loadingOperators.value = false;
+      // If empty (generic client) → default to manual mode
+      if (list.isEmpty) useManualMode.value = true;
     });
+    loadSupportHistory().then((h) => history.value = h);
 
     showDialog(
       context: ctx,
       builder: (_) => AlertDialog(
         title: const Text('Запросить помощь'),
         content: SizedBox(
-          width: 380,
+          width: 420,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Выберите сотрудника, которого позвать (или оставьте для общей очереди):',
-                  style: TextStyle(fontSize: 13)),
-                const SizedBox(height: 8),
+                // Mode toggle row — only shown if operator list is non-empty
+                ValueListenableBuilder<List<Map<String, dynamic>>>(
+                  valueListenable: operators,
+                  builder: (_, list, __) {
+                    if (list.isEmpty) return const SizedBox.shrink();
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: useManualMode,
+                      builder: (_, manual, __) => Row(
+                        children: [
+                          Expanded(
+                            child: SegmentedButton<bool>(
+                              segments: const [
+                                ButtonSegment(value: false, label: Text('Из списка', style: TextStyle(fontSize: 12))),
+                                ButtonSegment(value: true, label: Text('По ID', style: TextStyle(fontSize: 12))),
+                              ],
+                              selected: {manual},
+                              showSelectedIcon: false,
+                              onSelectionChanged: (s) => useManualMode.value = s.first,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // ── Mode 1: pick from operator list ──
                 ValueListenableBuilder<bool>(
-                  valueListenable: loading,
-                  builder: (_, isLoading, __) {
-                    if (isLoading) {
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Загружается список сотрудников...', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      );
-                    }
-                    return ValueListenableBuilder<List<Map<String, dynamic>>>(
-                      valueListenable: operators,
-                      builder: (_, list, __) {
-                        if (list.isEmpty) {
+                  valueListenable: useManualMode,
+                  builder: (_, manual, __) {
+                    if (manual) return const SizedBox.shrink();
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: loadingOperators,
+                      builder: (_, isLoading, __) {
+                        if (isLoading) {
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text('Нет доступных сотрудников. Запрос пойдёт в общую очередь.',
-                                style: TextStyle(color: Colors.orange, fontSize: 12)),
+                            child: Text('Загружается список...', style: TextStyle(color: Colors.grey, fontSize: 12)),
                           );
                         }
-                        return ValueListenableBuilder<Map<String, dynamic>?>(
-                          valueListenable: selectedOperator,
-                          builder: (_, sel, __) {
-                            return Container(
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.grey.shade300),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              constraints: const BoxConstraints(maxHeight: 180),
-                              child: ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: list.length + 1,
-                                itemBuilder: (_, i) {
-                                  if (i == 0) {
-                                    return RadioListTile<Map<String, dynamic>?>(
-                                      title: const Text('Любой свободный', style: TextStyle(fontSize: 13)),
-                                      value: null,
-                                      groupValue: sel,
-                                      dense: true,
-                                      onChanged: (v) => selectedOperator.value = v,
-                                    );
-                                  }
-                                  final op = list[i - 1];
-                                  final online = op['online'] == true;
-                                  return RadioListTile<Map<String, dynamic>?>(
-                                    title: Row(
-                                      children: [
-                                        Container(
-                                          width: 8, height: 8,
-                                          margin: const EdgeInsets.only(right: 6),
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: online ? Colors.green : Colors.grey,
-                                          ),
+                        return ValueListenableBuilder<List<Map<String, dynamic>>>(
+                          valueListenable: operators,
+                          builder: (_, list, __) {
+                            if (list.isEmpty) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text(
+                                  'Список сотрудников недоступен. Введите ID получателя помощи вручную.',
+                                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                                ),
+                              );
+                            }
+                            return ValueListenableBuilder<Map<String, dynamic>?>(
+                              valueListenable: selectedOperator,
+                              builder: (_, sel, __) {
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey.shade300),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  constraints: const BoxConstraints(maxHeight: 180),
+                                  child: ListView.builder(
+                                    shrinkWrap: true,
+                                    itemCount: list.length + 1,
+                                    itemBuilder: (_, i) {
+                                      if (i == 0) {
+                                        return RadioListTile<Map<String, dynamic>?>(
+                                          title: const Text('Любой свободный', style: TextStyle(fontSize: 13)),
+                                          value: null,
+                                          groupValue: sel,
+                                          dense: true,
+                                          onChanged: (v) => selectedOperator.value = v,
+                                        );
+                                      }
+                                      final op = list[i - 1];
+                                      final online = op['online'] == true;
+                                      return RadioListTile<Map<String, dynamic>?>(
+                                        title: Row(
+                                          children: [
+                                            Container(
+                                              width: 8, height: 8,
+                                              margin: const EdgeInsets.only(right: 6),
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: online ? Colors.green : Colors.grey,
+                                              ),
+                                            ),
+                                            Expanded(child: Text(op['hostname']?.toString() ?? op['machine_id']?.toString() ?? '?',
+                                                style: const TextStyle(fontSize: 13))),
+                                          ],
                                         ),
-                                        Expanded(child: Text(op['hostname']?.toString() ?? op['machine_id']?.toString() ?? '?',
-                                            style: const TextStyle(fontSize: 13))),
-                                      ],
-                                    ),
-                                    value: op,
-                                    groupValue: sel,
-                                    dense: true,
-                                    onChanged: (v) => selectedOperator.value = v,
-                                  );
-                                },
-                              ),
+                                        value: op,
+                                        groupValue: sel,
+                                        dense: true,
+                                        onChanged: (v) => selectedOperator.value = v,
+                                      );
+                                    },
+                                  ),
+                                );
+                              },
                             );
                           },
                         );
@@ -598,11 +688,74 @@ class AgentService {
                     );
                   },
                 ),
-                const SizedBox(height: 12),
+
+                // ── Mode 2: manual ID entry ──
+                ValueListenableBuilder<bool>(
+                  valueListenable: useManualMode,
+                  builder: (_, manual, __) {
+                    if (!manual) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Введите ID специалиста, у кого попросить помощь:',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: manualIdCtl,
+                          decoration: const InputDecoration(
+                            hintText: '123 456 789  или  abc123def456',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // History of last contacted IDs
+                        ValueListenableBuilder<List<Map<String, String>>>(
+                          valueListenable: history,
+                          builder: (_, h, __) {
+                            if (h.isEmpty) return const SizedBox.shrink();
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 4),
+                                const Text('Недавние:',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: h.take(6).map((e) {
+                                    final lbl = e['label']?.isNotEmpty == true ? e['label']! : (e['target_id'] ?? '');
+                                    return InkWell(
+                                      onTap: () => manualIdCtl.text = e['target_id'] ?? '',
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                        decoration: BoxDecoration(
+                                          border: Border.all(color: Colors.grey.shade300),
+                                          borderRadius: BorderRadius.circular(99),
+                                        ),
+                                        child: Text(lbl, style: const TextStyle(fontSize: 11)),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+
+                const SizedBox(height: 14),
                 const Text('Опишите проблему (необязательно):', style: TextStyle(fontSize: 13)),
                 const SizedBox(height: 6),
                 TextField(
-                  controller: controller,
+                  controller: messageCtl,
                   maxLines: 3,
                   decoration: const InputDecoration(
                     hintText: 'Например: не работает принтер...',
@@ -617,18 +770,45 @@ class AgentService {
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Отмена')),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final op = selectedOperator.value;
-              sendSupportRequest(
-                message: controller.text.trim(),
-                targetMachineId: op?['machine_id']?.toString() ?? '',
+              final manualId = manualIdCtl.text.trim().replaceAll(' ', '');
+              final isManualEnabled = useManualMode.value;
+
+              if (isManualEnabled && manualId.isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Введите ID получателя помощи')),
+                );
+                return;
+              }
+
+              await sendSupportRequest(
+                message: messageCtl.text.trim(),
+                targetMachineId: isManualEnabled ? '' : (op?['machine_id']?.toString() ?? ''),
+                targetRustdeskId: isManualEnabled ? manualId : '',
               );
-              Navigator.of(ctx).pop();
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                SnackBar(content: Text(op != null
-                  ? 'Запрос отправлен ${op['hostname'] ?? "сотруднику"}. Ожидайте уведомления.'
-                  : 'Запрос отправлен. Свободный сотрудник подключится в ближайшее время.')),
-              );
+
+              // Save to local history
+              final saveId = isManualEnabled ? manualId : (op?['machine_id']?.toString() ?? '');
+              final saveLabel = isManualEnabled
+                  ? manualId
+                  : (op?['hostname']?.toString() ?? op?['machine_id']?.toString() ?? '');
+              if (saveId.isNotEmpty) {
+                await saveSupportHistoryEntry(targetId: saveId, label: saveLabel);
+              }
+
+              if (ctx.mounted) {
+                Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text(
+                    isManualEnabled
+                      ? 'Запрос отправлен на ID $manualId. Ожидайте подключения.'
+                      : (op != null
+                          ? 'Запрос отправлен ${op['hostname'] ?? "сотруднику"}. Ожидайте уведомления.'
+                          : 'Запрос отправлен. Свободный сотрудник подключится в ближайшее время.')
+                  )),
+                );
+              }
             },
             child: const Text('Отправить'),
           ),
@@ -636,4 +816,5 @@ class AgentService {
       ),
     );
   }
+
 }
