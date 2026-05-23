@@ -94,6 +94,12 @@ class AgentService {
             await _ackNotification(item['id'].toString());
             _applyConfigUpdate(item as Map<String, dynamic>);
           });
+        } else if (item['type'] == 'support_ping') {
+          // Peer-to-peer support request — operator sees this on their own client.
+          // Don't auto-ack here; ack happens after operator picks a response action.
+          _withContext((ctx) {
+            showSupportPingDialog(ctx, item as Map<String, dynamic>);
+          });
         } else {
           _withContext((ctx) async {
             await _ackNotification(item['id'].toString());
@@ -366,7 +372,7 @@ class AgentService {
     } catch (_) {}
   }
 
-  Future<void> sendSupportRequest({String message = ''}) async {
+  Future<void> sendSupportRequest({String message = '', String targetMachineId = '', String targetRustdeskId = ''}) async {
     if (_apiServer == null || _machineId == null) return;
     try {
       await http.post(
@@ -377,40 +383,251 @@ class AgentService {
           'service_key': _serviceKey ?? '',
           'hostname': Platform.localHostname,
           'message': message,
+          'target_machine_id': targetMachineId,
+          'target_rustdesk_id': targetRustdeskId,
         }),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
   }
 
+  Future<List<Map<String, dynamic>>> fetchOperators() async {
+    if (_apiServer == null) return [];
+    try {
+      final uri = Uri.parse('$_apiServer/admin/agent/operators').replace(queryParameters: {
+        'service_key': _serviceKey ?? '',
+      });
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) return [];
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final items = (data['items'] as List<dynamic>?) ?? [];
+      return items.cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> respondToSupportRequest(int requestId, String action) async {
+    if (_apiServer == null || _machineId == null) return;
+    try {
+      await http.post(
+        Uri.parse('$_apiServer/admin/agent/support-request/respond'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'machine_id': _machineId,
+          'service_key': _serviceKey ?? '',
+          'request_id': requestId,
+          'action': action,
+        }),
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {}
+  }
+
+  /// Parses "req-123" → 123, used when reading support_ping options.
+  int? _parseRequestRef(String ref) {
+    final parts = ref.split(':');
+    if (parts.length < 2) return null;
+    final idStr = parts[1].replaceFirst('req-', '');
+    return int.tryParse(idStr);
+  }
+
+  /// Shows a special dialog when the operator's agent receives a support_ping.
+  /// Buttons: Принять / Через 10 мин / Через час / Отклонить.
+  /// Each maps to an option in the AgentNotification payload (accept/defer10/defer60/decline).
+  void showSupportPingDialog(BuildContext ctx, Map<String, dynamic> item) {
+    final options = (item['options'] as List<dynamic>?)?.cast<String>() ?? [];
+    int? requestId;
+    final actionLabels = <String, String>{
+      'accept': '✓ Принять',
+      'defer10': 'Через 10 мин',
+      'defer60': 'Через час',
+      'decline': '✕ Отклонить',
+    };
+    final actionTypes = <String, Color>{
+      'accept': const Color(0xFF16A34A),
+      'defer10': const Color(0xFF2563EB),
+      'defer60': const Color(0xFF2563EB),
+      'decline': const Color(0xFFDC2626),
+    };
+    for (final o in options) {
+      final id = _parseRequestRef(o);
+      if (id != null) {
+        requestId = id;
+        break;
+      }
+    }
+
+    showDialog(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Row(
+          children: [
+            const Icon(Icons.support_agent, color: Color(0xFFEA580C)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(item['title']?.toString() ?? 'Запрос помощи', style: const TextStyle(fontWeight: FontWeight.w700))),
+          ],
+        ),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item['body']?.toString() ?? '', style: const TextStyle(fontSize: 14, height: 1.5)),
+            ],
+          ),
+        ),
+        actions: actionLabels.entries.map((entry) {
+          return TextButton(
+            onPressed: () async {
+              if (requestId != null) {
+                await respondToSupportRequest(requestId, entry.key);
+              }
+              await _ackNotification(item['id'].toString());
+              if (ctx.mounted) Navigator.of(ctx).pop();
+              if (entry.key == 'accept' && ctx.mounted) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Запрос принят. Свяжитесь с пользователем.')),
+                );
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: actionTypes[entry.key]),
+            child: Text(entry.value),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   void showSupportRequestDialog(BuildContext ctx) {
     final controller = TextEditingController();
+    final ValueNotifier<Map<String, dynamic>?> selectedOperator = ValueNotifier(null);
+    final ValueNotifier<List<Map<String, dynamic>>> operators = ValueNotifier([]);
+    final ValueNotifier<bool> loading = ValueNotifier(true);
+
+    // Load operators in background
+    fetchOperators().then((list) {
+      operators.value = list;
+      loading.value = false;
+    });
+
     showDialog(
       context: ctx,
       builder: (_) => AlertDialog(
         title: const Text('Запросить помощь'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Опишите проблему (необязательно):'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'Например: не работает принтер...',
-                border: OutlineInputBorder(),
-              ),
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Выберите сотрудника, которого позвать (или оставьте для общей очереди):',
+                  style: TextStyle(fontSize: 13)),
+                const SizedBox(height: 8),
+                ValueListenableBuilder<bool>(
+                  valueListenable: loading,
+                  builder: (_, isLoading, __) {
+                    if (isLoading) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('Загружается список сотрудников...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      );
+                    }
+                    return ValueListenableBuilder<List<Map<String, dynamic>>>(
+                      valueListenable: operators,
+                      builder: (_, list, __) {
+                        if (list.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text('Нет доступных сотрудников. Запрос пойдёт в общую очередь.',
+                                style: TextStyle(color: Colors.orange, fontSize: 12)),
+                          );
+                        }
+                        return ValueListenableBuilder<Map<String, dynamic>?>(
+                          valueListenable: selectedOperator,
+                          builder: (_, sel, __) {
+                            return Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey.shade300),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              constraints: const BoxConstraints(maxHeight: 180),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: list.length + 1,
+                                itemBuilder: (_, i) {
+                                  if (i == 0) {
+                                    return RadioListTile<Map<String, dynamic>?>(
+                                      title: const Text('Любой свободный', style: TextStyle(fontSize: 13)),
+                                      value: null,
+                                      groupValue: sel,
+                                      dense: true,
+                                      onChanged: (v) => selectedOperator.value = v,
+                                    );
+                                  }
+                                  final op = list[i - 1];
+                                  final online = op['online'] == true;
+                                  return RadioListTile<Map<String, dynamic>?>(
+                                    title: Row(
+                                      children: [
+                                        Container(
+                                          width: 8, height: 8,
+                                          margin: const EdgeInsets.only(right: 6),
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: online ? Colors.green : Colors.grey,
+                                          ),
+                                        ),
+                                        Expanded(child: Text(op['hostname']?.toString() ?? op['machine_id']?.toString() ?? '?',
+                                            style: const TextStyle(fontSize: 13))),
+                                      ],
+                                    ),
+                                    value: op,
+                                    groupValue: sel,
+                                    dense: true,
+                                    onChanged: (v) => selectedOperator.value = v,
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                const Text('Опишите проблему (необязательно):', style: TextStyle(fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: controller,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    hintText: 'Например: не работает принтер...',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
-              sendSupportRequest(message: controller.text.trim());
+              final op = selectedOperator.value;
+              sendSupportRequest(
+                message: controller.text.trim(),
+                targetMachineId: op?['machine_id']?.toString() ?? '',
+              );
               Navigator.of(ctx).pop();
               ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(content: Text('Запрос отправлен. Специалист подключится в ближайшее время.')),
+                SnackBar(content: Text(op != null
+                  ? 'Запрос отправлен ${op['hostname'] ?? "сотруднику"}. Ожидайте уведомления.'
+                  : 'Запрос отправлен. Свободный сотрудник подключится в ближайшее время.')),
               );
             },
             child: const Text('Отправить'),

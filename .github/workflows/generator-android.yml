@@ -337,6 +337,22 @@ jobs:
                 -e "s|'librustdesk\.so'|'lib${NATIVE_NAME}.so'|g" \
                 -e "s|\"librustdesk\.so\"|\"lib${NATIVE_NAME}.so\"|g" {} +
             echo "  ✓ Kotlin loadLibrary + Dart references updated"
+
+            # ── 4. URL scheme rename: rustdesk:// → <brand>:// ───────────────
+            # OS-level handler in the manifest's deep-link intent-filter.
+            # If left as "rustdesk", clicking rustdesk://<id> in a browser
+            # opens the ORIGINAL RustDesk if it's installed instead of our
+            # branded build.
+            sed -i "s|android:scheme=\"rustdesk\"|android:scheme=\"${NATIVE_NAME}\"|g" \
+              ./flutter/android/app/src/main/AndroidManifest.xml || true
+            # Hardcoded rustdesk:// in Dart link handlers / share UIs
+            find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+              -exec sed -i \
+                -e "s|rustdesk://|${NATIVE_NAME}://|g" {} +
+            # Hardcoded scheme in Rust uri helpers
+            find ./src -name "*.rs" -type f \
+              -exec sed -i "s|rustdesk://|${NATIVE_NAME}://|g" {} + 2>/dev/null || true
+            echo "  ✓ URL scheme rebranded: rustdesk:// → ${NATIVE_NAME}://"
           fi
 
       - name: Enable outgoing-only mode (RU anti-fraud)
