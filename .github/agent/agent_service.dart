@@ -24,6 +24,18 @@ class AgentService {
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
 
+  // Tunables — exposed at top for easy adjustment.
+  // Lower values = more responsive support flow but more server load.
+  static const Duration kHeartbeatInterval = Duration(minutes: 1);
+  static const Duration kInboxInterval = Duration(seconds: 30);
+  static const Duration kInitialHeartbeatDelay = Duration(seconds: 3);
+  static const Duration kInitialInboxDelay = Duration(seconds: 8);
+  static const Duration kHttpTimeout = Duration(seconds: 12);
+
+  /// Tracks consecutive failures for backoff. Reset on success.
+  int _heartbeatFailures = 0;
+  int _inboxFailures = 0;
+
   // Called from main() after app boots.
   Future<void> initialize({required String apiServer, String serviceKey = ''}) async {
     if (apiServer.isEmpty) return;
@@ -31,11 +43,11 @@ class AgentService {
     _serviceKey = serviceKey;
     _machineId = await _getOrCreateMachineId();
 
-    Future.delayed(const Duration(seconds: 5), _sendHeartbeat);
-    _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) => _sendHeartbeat());
+    Future.delayed(kInitialHeartbeatDelay, _sendHeartbeat);
+    _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) => _sendHeartbeat());
 
-    Future.delayed(const Duration(seconds: 15), _checkInbox);
-    _inboxTimer = Timer.periodic(const Duration(minutes: 3), (_) => _checkInbox());
+    Future.delayed(kInitialInboxDelay, _checkInbox);
+    _inboxTimer = Timer.periodic(kInboxInterval, (_) => _checkInbox());
   }
 
   Future<String> _getOrCreateMachineId() async {
@@ -63,7 +75,7 @@ class AgentService {
   Future<void> _sendHeartbeat() async {
     if (_apiServer == null || _machineId == null) return;
     try {
-      await http.post(
+      final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/heartbeat'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -73,8 +85,20 @@ class AgentService {
           'os': Platform.operatingSystem,
           'os_version': Platform.operatingSystemVersion,
         }),
-      ).timeout(const Duration(seconds: 10));
-    } catch (_) {}
+      ).timeout(kHttpTimeout);
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        _heartbeatFailures = 0;
+      } else {
+        _heartbeatFailures++;
+      }
+    } catch (_) {
+      _heartbeatFailures++;
+      // Retry-with-backoff: schedule a single faster retry after small delay
+      // if this was a transient network blip (max 3 quick retries).
+      if (_heartbeatFailures <= 3) {
+        Future.delayed(Duration(seconds: 5 * _heartbeatFailures), _sendHeartbeat);
+      }
+    }
   }
 
   Future<void> _checkInbox() async {
@@ -84,8 +108,12 @@ class AgentService {
         'machine_id': _machineId!,
         'service_key': _serviceKey ?? '',
       });
-      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
-      if (resp.statusCode != 200) return;
+      final resp = await http.get(uri).timeout(kHttpTimeout);
+      if (resp.statusCode != 200) {
+        _inboxFailures++;
+        return;
+      }
+      _inboxFailures = 0;
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = (data['items'] as List<dynamic>?) ?? [];
       for (final item in items) {
@@ -107,7 +135,9 @@ class AgentService {
           });
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      _inboxFailures++;
+    }
   }
 
   Future<void> _ackNotification(String id) async {
