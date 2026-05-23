@@ -588,14 +588,22 @@ class AgentService {
     final ValueNotifier<List<Map<String, dynamic>>> operators = ValueNotifier([]);
     final ValueNotifier<bool> loadingOperators = ValueNotifier(true);
     final ValueNotifier<List<Map<String, String>>> history = ValueNotifier([]);
-    final ValueNotifier<bool> useManualMode = ValueNotifier(false);
+    // If this client has no service_key baked in (Generic EvertyDesk),
+    // start in manual mode immediately — no point loading an empty list.
+    final isGenericClient = (_serviceKey ?? '').isEmpty;
+    final ValueNotifier<bool> useManualMode = ValueNotifier(isGenericClient);
 
-    // Load operator list + history in background
+    // Load operator list + history in background.
+    // For generic clients we still call fetchOperators (it returns [] anyway)
+    // — but skip the auto-switch since we're already in manual mode.
     fetchOperators().then((list) {
       operators.value = list;
       loadingOperators.value = false;
-      // If empty (generic client) → default to manual mode
-      if (list.isEmpty) useManualMode.value = true;
+      if (list.isEmpty && !isGenericClient) {
+        // Tenant client whose operator list is empty (e.g. nobody online yet)
+        // — also switch to manual to give user a way to act
+        useManualMode.value = true;
+      }
     });
     loadSupportHistory().then((h) => history.value = h);
 
@@ -611,10 +619,13 @@ class AgentService {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Mode toggle row — only shown if operator list is non-empty
-                ValueListenableBuilder<List<Map<String, dynamic>>>(
-                  valueListenable: operators,
-                  builder: (_, list, __) {
-                    if (list.isEmpty) return const SizedBox.shrink();
+                // AND this isn't a generic (unbranded) client. Generic clients
+                // never have an operator list, so the toggle is just clutter.
+                if (!isGenericClient)
+                  ValueListenableBuilder<List<Map<String, dynamic>>>(
+                    valueListenable: operators,
+                    builder: (_, list, __) {
+                      if (list.isEmpty) return const SizedBox.shrink();
                     return ValueListenableBuilder<bool>(
                       valueListenable: useManualMode,
                       builder: (_, manual, __) => Row(
