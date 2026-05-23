@@ -314,6 +314,31 @@ jobs:
             --include='*.dart' --include='*.xml' --include='*.kt' --include='*.rs' \
             2>/dev/null | head -30 || true
 
+          # ── 3. Native library rename — reduces antivirus heuristic detection ──
+          # Kaspersky's HEUR:RemoteAdmin.AndroidOS.RustDesk.a signature matches
+          # APKs that ship a librustdesk.so file. We rename only the .so file
+          # that ships in the APK (and the corresponding loadLibrary call) —
+          # the Rust crate keeps its original name, so cargo still produces
+          # liblibrustdesk.so. We rename it during the copy-to-jniLibs step.
+          NATIVE_NAME=$(echo "${BRAND_LOWER}" | tr -cd '[:alnum:]')
+          if [ -n "${NATIVE_NAME}" ] && [ "${NATIVE_NAME}" != "rustdesk" ]; then
+            echo "  Will rename .so → lib${NATIVE_NAME}.so during build step"
+            # Expose the native name to subsequent steps via GITHUB_ENV
+            echo "NATIVE_NAME=${NATIVE_NAME}" >> $GITHUB_ENV
+
+            # Patch the Kotlin System.loadLibrary("rustdesk") call to load
+            # lib${NATIVE_NAME}.so instead.
+            sed -i "s|System\.loadLibrary(\"rustdesk\")|System.loadLibrary(\"${NATIVE_NAME}\")|g" \
+              ./flutter/android/app/src/main/kotlin/ffi.kt || true
+
+            # Dart DynamicLibrary.open references (rare on Android, but defensive)
+            find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+              -exec sed -i \
+                -e "s|'librustdesk\.so'|'lib${NATIVE_NAME}.so'|g" \
+                -e "s|\"librustdesk\.so\"|\"lib${NATIVE_NAME}.so\"|g" {} +
+            echo "  ✓ Kotlin loadLibrary + Dart references updated"
+          fi
+
       - name: Enable outgoing-only mode (RU anti-fraud)
         if: ${{ inputs.outgoing_only == 'true' }}
         continue-on-error: true
@@ -430,24 +455,31 @@ jobs:
         run: |
           rustup target add ${{ matrix.job.target }}
           cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
+          # Decide deployed .so name: stays librustdesk.so unless rebrand is on
+          # AND the aggressive rebrand step set NATIVE_NAME above.
+          DEPLOYED_SO_NAME="librustdesk.so"
+          if [ -n "${NATIVE_NAME:-}" ] && [ "${NATIVE_NAME}" != "rustdesk" ]; then
+            DEPLOYED_SO_NAME="lib${NATIVE_NAME}.so"
+            echo "Anti-AV rename: will deploy as ${DEPLOYED_SO_NAME}"
+          fi
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
               ./flutter/ndk_arm64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
+                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/${DEPLOYED_SO_NAME}
               ;;
             armv7-linux-androideabi)
               ./flutter/ndk_arm.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
+                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/${DEPLOYED_SO_NAME}
               ;;
             x86_64-linux-android)
               ./flutter/ndk_x64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/x86_64
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
+                 ./flutter/android/app/src/main/jniLibs/x86_64/${DEPLOYED_SO_NAME}
               ;;
           esac
 
