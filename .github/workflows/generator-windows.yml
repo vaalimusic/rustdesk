@@ -162,9 +162,11 @@ jobs:
           # navigatorKey lives in main.dart (both at lines ~365 and ~500), not desktop_home_page.dart
           sed -i "s|navigatorKey: globalKey,|navigatorKey: AgentService.instance.navigatorKey,|g" ./flutter/lib/main.dart || true
           sed -i "s|navigatorKey: Get.key,|navigatorKey: AgentService.instance.navigatorKey,|g" ./flutter/lib/main.dart || true
-          # Support-request button: inject after stable anchor buildTip(context),
-          # Was previously trying to find PopupMenuButton<String> which doesn't exist in upstream
+          # Support-request button: inject after stable anchor buildTip(context).
+          # CRITICAL: also inject the AgentService import at the top of the file,
+          # otherwise the build fails with "AgentService isn't defined".
           if [ -f ./flutter/lib/desktop/pages/desktop_home_page.dart ]; then
+            sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\n|" ./flutter/lib/desktop/pages/desktop_home_page.dart
             sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
             echo "✓ Support-request button injected into desktop_home_page.dart"
             grep -c "showSupportRequestDialog" ./flutter/lib/desktop/pages/desktop_home_page.dart || echo "  ⚠️ injection may have failed"
