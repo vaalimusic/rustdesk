@@ -246,7 +246,7 @@ jobs:
         shell: bash
         run: |
           export VCPKG_ROOT=/opt/artifacts/vcpkg
-          python3 build.py --hwcodec --flutter --deb
+          python3 build.py --hwcodec --flutter --package deb
 
       - name: Report progress - uploading
         shell: bash
