@@ -94,11 +94,13 @@ jobs:
           swap-storage: false
 
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+        shell: bash
+        run: |
+          # Export ACTIONS_CACHE_URL / ACTIONS_RUNTIME_TOKEN so vcpkg can use
+          # the GHA binary cache. These variables are already in the runner
+          # environment; we just need them written to GITHUB_ENV.
+          echo "ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL}" >> "$GITHUB_ENV"
+          echo "ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
@@ -165,7 +167,11 @@ jobs:
         with:
           vcpkgDirectory: /opt/artifacts/vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
+          # doNotCache=true stops run-vcpkg from trying to save/restore the
+          # vcpkg tool itself via actions/cache — avoids 400 "service unavailable"
+          # errors from GitHub's cache API for the tool layer.
+          # Binary packages are still cached through VCPKG_BINARY_SOURCES (x-gha).
+          doNotCache: true
 
       - name: Install vcpkg dependencies
         run: |
@@ -242,11 +248,17 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"progress":"Linux: компилируется (Rust + Flutter, ~40-70 мин)..."}'
 
+      - name: Check disk and memory before build
+        shell: bash
+        run: |
+          echo "=== Disk ===" && df -h /
+          echo "=== RAM ===" && free -h
+
       - name: Build Linux DEB
         shell: bash
         run: |
           export VCPKG_ROOT=/opt/artifacts/vcpkg
-          python3 build.py --hwcodec --flutter --package deb
+          python3 -u build.py --hwcodec --flutter --package deb
 
       - name: Report progress - uploading
         shell: bash
