@@ -21,7 +21,11 @@ env:
   RUST_VERSION: "1.75"
   FLUTTER_VERSION: "3.24.5"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Disable vcpkg binary caching — the x-gha backend requires
+  # ACTIONS_CACHE_URL which is only accessible via the Actions runtime API
+  # (not the bash environment), making it unreliable. Building from source
+  # adds ~10 min but is fully reliable within the 150-min timeout.
+  VCPKG_BINARY_SOURCES: "clear"
   VERSION: "${{ inputs.version || 'master' }}"
 
 jobs:
@@ -93,14 +97,6 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Export GitHub Actions cache environment variables
-        shell: bash
-        run: |
-          # Export ACTIONS_CACHE_URL / ACTIONS_RUNTIME_TOKEN so vcpkg can use
-          # the GHA binary cache. These variables are already in the runner
-          # environment; we just need them written to GITHUB_ENV.
-          echo "ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL}" >> "$GITHUB_ENV"
-          echo "ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
