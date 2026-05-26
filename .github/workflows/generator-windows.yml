@@ -123,11 +123,10 @@ jobs:
             -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Installing dependencies...\"}"
 
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+        shell: bash
+        run: |
+          echo "ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL}" >> $GITHUB_ENV
+          echo "ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN}" >> $GITHUB_ENV
 
       - name: Checkout RustDesk source (tag)
         if: env.VERSION != 'master'
