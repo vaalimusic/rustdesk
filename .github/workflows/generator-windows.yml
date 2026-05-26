@@ -266,19 +266,23 @@ jobs:
 
       - name: Allow custom.txt + remove setup server tip
         continue-on-error: true
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 1
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py -OutFile allowCustom.py
-            python allowCustom.py
-            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff
-            git apply removeSetupServerTip.diff
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py -OutFile allowCustom.py -TimeoutSec 30
+              python allowCustom.py
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff -TimeoutSec 30
+              git apply removeSetupServerTip.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "All retries failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v1
+        uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ env.LLVM_VERSION }}
 
@@ -339,21 +343,25 @@ jobs:
       - name: Patch icon
         if: env.ICON_URL != ''
         continue-on-error: true
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 1
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            Invoke-WebRequest -Uri "${env:ICON_URL}" -OutFile ./res/icon.png
-            mv ./res/icon.ico ./res/icon.ico.bak
-            mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
-            magick ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico
-            cp ./res/icon.ico ./res/tray-icon.ico
-            magick ./res/icon.png -resize 32x32 ./res/32x32.png
-            magick ./res/icon.png -resize 64x64 ./res/64x64.png
-            magick ./res/icon.png -resize 128x128 ./res/128x128.png
-            magick ./res/128x128.png -resize 200% ./res/128x128@2x.png
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri "${env:ICON_URL}" -OutFile ./res/icon.png -TimeoutSec 30
+              mv ./res/icon.ico ./res/icon.ico.bak
+              mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
+              magick ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico
+              cp ./res/icon.ico ./res/tray-icon.ico
+              magick ./res/icon.png -resize 32x32 ./res/32x32.png
+              magick ./res/icon.png -resize 64x64 ./res/64x64.png
+              magick ./res/icon.png -resize 128x128 ./res/128x128.png
+              magick ./res/128x128.png -resize 200% ./res/128x128@2x.png
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "Icon patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
 
       - name: Replace Flutter icons
         if: env.ICON_URL != ''
@@ -374,26 +382,34 @@ jobs:
       - name: Add cycle monitors to toolbar
         if: env.CYCLE_MONITOR == 'true'
         continue-on-error: true
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 1
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/cycle_monitor.diff -OutFile cycle_monitor.diff
-            git apply cycle_monitor.diff
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/cycle_monitor.diff -OutFile cycle_monitor.diff -TimeoutSec 30
+              git apply cycle_monitor.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "cycle_monitor patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
 
       - name: Use X for offline display
         if: env.X_OFFLINE == 'true'
         continue-on-error: true
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 1
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/xoffline.diff -OutFile xoffline.diff
-            git apply xoffline.diff
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/xoffline.diff -OutFile xoffline.diff -TimeoutSec 30
+              git apply xoffline.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "xoffline patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
 
       - name: Remove new version notification
         if: env.REMOVE_NOTIF == 'true'
@@ -441,13 +457,17 @@ jobs:
       - name: Logo stuff (place logo in flutter assets)
         if: env.LOGO_URL != ''
         continue-on-error: true
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 1
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            Invoke-WebRequest -Uri "${env:LOGO_URL}" -OutFile ./rustdesk/data/flutter_assets/assets/logo.png
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri "${env:LOGO_URL}" -OutFile ./rustdesk/data/flutter_assets/assets/logo.png -TimeoutSec 30
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "Logo download failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
 
       - name: Download RustDeskTempTopMostWindow
         continue-on-error: true
