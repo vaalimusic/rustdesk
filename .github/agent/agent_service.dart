@@ -35,12 +35,14 @@ class AgentService {
   /// Tracks consecutive failures for backoff. Reset on success.
   int _heartbeatFailures = 0;
   int _inboxFailures = 0;
+  bool _isGenericClient = false;
 
   // Called from main() after app boots.
-  Future<void> initialize({required String apiServer, String serviceKey = ''}) async {
+  Future<void> initialize({required String apiServer, String serviceKey = '', bool isGenericClient = false}) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
     _serviceKey = serviceKey;
+    _isGenericClient = isGenericClient;
     _machineId = await _getOrCreateMachineId();
 
     Future.delayed(kInitialHeartbeatDelay, _sendHeartbeat);
@@ -613,9 +615,9 @@ class AgentService {
     final ValueNotifier<List<Map<String, dynamic>>> operators = ValueNotifier([]);
     final ValueNotifier<bool> loadingOperators = ValueNotifier(true);
     final ValueNotifier<List<Map<String, String>>> history = ValueNotifier([]);
-    // If this client has no service_key baked in (Generic EvertyDesk),
-    // start in manual mode immediately — no point loading an empty list.
-    final isGenericClient = (_serviceKey ?? '').isEmpty;
+    // Generic clients (is_generic=true baked in at build time) have no
+    // operator list — start in manual mode immediately.
+    final isGenericClient = _isGenericClient;
     final ValueNotifier<bool> useManualMode = ValueNotifier(isGenericClient);
 
     // Load operator list + history in background.

@@ -69,6 +69,7 @@ jobs:
           CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
           echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')" >> $GITHUB_ENV
           echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"   >> $GITHUB_ENV
+          echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"  >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
@@ -77,7 +78,7 @@ jobs:
         run: |
           mkdir -p /tmp/everty-agent
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" > /tmp/everty-agent/agent_constants.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Report running
         shell: bash
@@ -139,7 +140,7 @@ jobs:
           cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
 
           sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
-          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey).ignore();|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient).ignore();|" ./flutter/lib/main.dart
           # NOTE: navigatorKey is NOT overridden. RustDesk's Get.dialog /
           # Get.snackbar rely on Get.key being attached to the live Navigator;
           # rewriting it broke the Sign-in dialog. AgentService uses its
@@ -250,11 +251,31 @@ jobs:
           echo "=== Disk ===" && df -h /
           echo "=== RAM ===" && free -h
 
+      - name: Prepare deb resources
+        shell: bash
+        run: |
+          # build.py --package deb looks for ../deb/ relative to flutter/.
+          # In newer RustDesk source the packaging data lives at res/deb/.
+          if [ ! -d deb ] && [ -d res/deb ]; then
+            cp -r res/deb deb
+            echo "Copied res/deb → deb/"
+          fi
+
+      - name: Enable Flutter Linux desktop
+        shell: bash
+        run: flutter config --enable-linux-desktop
+
       - name: Build Linux DEB
         shell: bash
         run: |
           export VCPKG_ROOT=/opt/artifacts/vcpkg
-          python3 -u build.py --hwcodec --flutter --package deb
+          BUILD_OUT=$(python3 -u build.py --flutter --package deb 2>&1) || BUILD_EXIT=$?
+          echo "$BUILD_OUT"
+          if echo "$BUILD_OUT" | grep -qx "False"; then
+            echo "::error::build.py returned False — Rust/Flutter compilation failed"
+            exit 1
+          fi
+          exit "${BUILD_EXIT:-0}"
 
       - name: Report progress - uploading
         shell: bash
