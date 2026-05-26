@@ -257,59 +257,34 @@ jobs:
           flutter config --enable-linux-desktop
           flutter --version
 
-      - name: Build Linux binary
+      - name: Build Linux DEB
         shell: bash
         run: |
           export VCPKG_ROOT=/opt/artifacts/vcpkg
-          # Use tee so cargo/flutter output is visible live in the log.
-          # build.py exits 0 even on failure (it just prints "False"), so we
-          # detect failure by scanning the output.
-          python3 -u build.py --flutter 2>&1 | tee /tmp/build_out.txt
-          if grep -q "^False$" /tmp/build_out.txt; then
-            echo "::error::build.py returned False — see output above for details"
+          # Stream output live via tee so errors are visible immediately.
+          # build.py may print "False" from partial packaging steps even when
+          # the actual binary was built — don't rely on text parsing.
+          python3 -u build.py --flutter 2>&1 | tee /tmp/build_out.txt || true
+          # Verify the actual build artifact, not build.py's printed return value.
+          if [ ! -f "flutter/build/linux/x64/release/bundle/rustdesk" ]; then
+            echo "::error::Build failed — flutter binary not found at flutter/build/linux/x64/release/bundle/rustdesk"
             exit 1
           fi
+          echo "✓ Flutter binary found"
 
-      - name: Package DEB
+      - name: Rename DEB
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk}"
-          APP="${APP_NAME:-RustDesk}"
-          VER="${VERSION:-1.0.0}"
-          BUNDLE="flutter/build/linux/x64/release/bundle"
-
-          if [ ! -d "$BUNDLE" ]; then
-            echo "::error::Flutter bundle not found at $BUNDLE"
-            find . -type d -name bundle 2>/dev/null | head -5
+          # build.py creates rustdesk.deb in the repo root (or flutter/).
+          DEB=$(find . -maxdepth 3 -name "*.deb" | grep -v vcpkg | grep -v apt | head -1)
+          if [ -z "$DEB" ]; then
+            echo "::error::No .deb found after build — listing deb candidates:"
+            find . -name "*.deb" 2>/dev/null || true
             exit 1
           fi
-
-          mkdir -p pkg/DEBIAN
-          mkdir -p pkg/usr/lib/rustdesk
-          mkdir -p pkg/usr/bin
-          mkdir -p pkg/usr/share/applications
-          mkdir -p pkg/usr/share/icons/hicolor/256x256/apps
-
-          cp -r "$BUNDLE/." pkg/usr/lib/rustdesk/
-          chmod +x pkg/usr/lib/rustdesk/rustdesk
-
-          # Wrapper script so /usr/bin/rustdesk works from any CWD
-          printf '#!/bin/sh\nexec /usr/lib/rustdesk/rustdesk "$@"\n' \
-            > pkg/usr/bin/rustdesk
-          chmod +x pkg/usr/bin/rustdesk
-
-          printf '[Desktop Entry]\nName=%s\nComment=Remote Desktop\nExec=/usr/bin/rustdesk %%u\nIcon=rustdesk\nType=Application\nCategories=Network;RemoteAccess;\n' \
-            "$APP" > pkg/usr/share/applications/rustdesk.desktop
-
-          [ -f ./res/icon.png ] && \
-            cp ./res/icon.png pkg/usr/share/icons/hicolor/256x256/apps/rustdesk.png || true
-
-          SIZE=$(du -s pkg | cut -f1)
-          printf 'Package: rustdesk\nVersion: %s\nArchitecture: amd64\nMaintainer: EvertyDesk\nInstalled-Size: %s\nDepends: libgtk-3-0, libxdo3, libdbus-1-3, libpulse0, libglib2.0-0\nDescription: %s Remote Desktop\n' \
-            "$VER" "$SIZE" "$APP" > pkg/DEBIAN/control
-
-          dpkg-deb -b pkg "${FNAME}.deb"
-          echo "Created ${FNAME}.deb ($(du -sh "${FNAME}.deb" | cut -f1))"
+          cp "$DEB" "${FNAME}.deb"
+          echo "✓ ${FNAME}.deb ready ($(du -sh "${FNAME}.deb" | cut -f1))"
 
       - name: Report progress - uploading
         shell: bash
@@ -322,10 +297,6 @@ jobs:
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk}"
-          if [ ! -f "${FNAME}.deb" ]; then
-            echo "No .deb file found"
-            exit 1
-          fi
           curl -s -f -X POST \
             "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
             -F "file=@${FNAME}.deb"
