@@ -71,9 +71,15 @@ jobs:
           rustup target add ${{ matrix.job.target }}
           rustup component add rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache Rust build
+        uses: actions/cache@v4
         with:
-          prefix-key: bridge-${{ matrix.job.os }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-bridge-${{ matrix.job.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: rust-bridge-${{ matrix.job.os }}-
 
       - name: Cache Bridge
         id: cache-bridge
@@ -82,12 +88,14 @@ jobs:
           path: /tmp/flutter_rust_bridge
           key: vcpkg-${{ matrix.job.target }}
 
-      - name: Install flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      - name: Install Flutter
+        run: |
+          wget -q "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz" -O /tmp/flutter.tar.xz
+          tar xf /tmp/flutter.tar.xz -C /opt
+          rm /tmp/flutter.tar.xz
+          echo "/opt/flutter/bin" >> $GITHUB_PATH
+          /opt/flutter/bin/flutter --disable-telemetry
+          /opt/flutter/bin/flutter precache --linux
 
       - name: Install flutter rust bridge deps
         shell: bash
