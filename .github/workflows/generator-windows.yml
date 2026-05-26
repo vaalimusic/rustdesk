@@ -282,23 +282,33 @@ jobs:
           }
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: ${{ env.LLVM_VERSION }}
+        shell: pwsh
+        run: |
+          $ver = "${{ env.LLVM_VERSION }}"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${ver}/LLVM-${ver}-win64.exe"
+          Invoke-WebRequest -Uri $url -OutFile LLVM-installer.exe -TimeoutSec 120
+          Start-Process -Wait -FilePath .\LLVM-installer.exe -ArgumentList "/S"
+          Remove-Item LLVM-installer.exe
+          Add-Content $env:GITHUB_PATH "C:\Program Files\LLVM\bin"
+          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 
       - name: Install Flutter
-        uses: subosito/flutter-action@v2.12.0
-        with:
-          channel: "stable"
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+        shell: pwsh
+        run: |
+          $ver = "${{ env.FLUTTER_VERSION }}"
+          Invoke-WebRequest -Uri "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_${ver}-stable.zip" -OutFile flutter.zip -TimeoutSec 120
+          Expand-Archive flutter.zip -DestinationPath C:\
+          Remove-Item flutter.zip
+          Add-Content $env:GITHUB_PATH "C:\flutter\bin"
+          C:\flutter\bin\flutter config --no-analytics
 
       - name: Replace Flutter engine with RustDesk custom engine
+        shell: pwsh
         run: |
-          flutter doctor -v
-          flutter precache --windows
+          C:\flutter\bin\flutter precache --windows
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+          mv -Force windows-x64-release/* C:\flutter\bin\cache\artifacts\engine\windows-x64-release\
 
       - name: Patch Flutter dropdown
         shell: bash
@@ -319,11 +329,14 @@ jobs:
           prefix-key: windows-2022
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
+        shell: pwsh
+        run: |
+          cd C:\vcpkg
+          git fetch --all
+          git checkout ${{ env.VCPKG_COMMIT_ID }}
+          .\bootstrap-vcpkg.bat -disableMetrics
+          Add-Content $env:GITHUB_ENV "VCPKG_ROOT=C:\vcpkg"
+          Add-Content $env:GITHUB_PATH "C:\vcpkg"
 
       - name: Install vcpkg dependencies
         env:
@@ -585,7 +598,11 @@ jobs:
           mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/rustdesk.exe"
 
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe
+          if ($msbuild) { Add-Content $env:GITHUB_PATH (Split-Path $msbuild) }
 
       - name: Build MSI installer
         continue-on-error: true
