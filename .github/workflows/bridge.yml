@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Checkout source code
         if: ${{ inputs.version != 'master' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: rustdesk/rustdesk
           ref: refs/tags/${{ inputs.version }}
@@ -40,7 +40,7 @@ jobs:
         
       - name: Checkout source code
         if: ${{ inputs.version == 'master' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: rustdesk/rustdesk
           submodules: recursive
@@ -94,7 +94,7 @@ jobs:
           tar xf /tmp/flutter.tar.xz -C /opt
           rm /tmp/flutter.tar.xz
           echo "/opt/flutter/bin" >> $GITHUB_PATH
-          /opt/flutter/bin/flutter --disable-telemetry
+          /opt/flutter/bin/flutter config --no-analytics
           /opt/flutter/bin/flutter precache --linux
 
       - name: Install flutter rust bridge deps
@@ -110,7 +110,7 @@ jobs:
           cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bridge-artifact
           path: |
