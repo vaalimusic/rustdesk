@@ -6,9 +6,9 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'Rustdesk Version'
-        required: true
-        default: '1.3.1'
+        description: 'Rustdesk Version (tag or "master")'
+        required: false
+        default: 'master'
         type: string
 
 env:
@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/flutter_rust_bridge
-          key: vcpkg-${{ matrix.job.arch }}
+          key: vcpkg-${{ matrix.job.target }}
 
       - name: Install flutter
         uses: subosito/flutter-action@v2
