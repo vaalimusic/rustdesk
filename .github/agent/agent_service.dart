@@ -52,6 +52,99 @@ class AgentService {
 
     Future.delayed(kInitialInboxDelay, _checkInbox);
     _inboxTimer = Timer.periodic(kInboxInterval, (_) => _checkInbox());
+
+    // One-time welcome on first run (branded clients only).
+    Future.delayed(const Duration(seconds: 6), _maybeShowWelcome);
+  }
+
+  // ── First-run welcome ──────────────────────────────────────────────────────
+  // Shown once per install for branded clients, so the end user understands
+  // the support flow. Generic/unbranded builds have no support provider, so
+  // they skip it. A flag file (next to agent_id) prevents re-showing.
+
+  Future<bool> _welcomeAlreadyShown() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}agent_welcome_shown');
+      return await file.exists();
+    } catch (_) {
+      return true; // on error, don't nag the user
+    }
+  }
+
+  Future<void> _markWelcomeShown() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}agent_welcome_shown');
+      await file.writeAsString('1');
+    } catch (_) {}
+  }
+
+  Future<void> _maybeShowWelcome() async {
+    if (_isGenericClient) return;
+    if (await _welcomeAlreadyShown()) return;
+    _withContext((ctx) {
+      _showWelcomeDialog(ctx);
+      _markWelcomeShown();
+    });
+  }
+
+  Widget _welcomeStep(String num, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: Color(0xFF2563EB), shape: BoxShape.circle),
+            child: Text(num, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13, height: 1.4))),
+        ],
+      ),
+    );
+  }
+
+  void _showWelcomeDialog(BuildContext ctx) {
+    showDialog(
+      context: ctx,
+      barrierDismissible: true,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Row(
+          children: const [
+            Icon(Icons.support_agent, color: Color(0xFF2563EB)),
+            SizedBox(width: 8),
+            Expanded(child: Text('Поддержка подключена', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Эта программа подключена к вашей службе поддержки и уже настроена — ничего вводить вручную не нужно.',
+                  style: TextStyle(fontSize: 14, height: 1.45)),
+              const SizedBox(height: 16),
+              _welcomeStep('1', 'Когда понадобится помощь — нажмите кнопку поддержки в окне программы.'),
+              _welcomeStep('2', 'Специалист увидит запрос и подключится к этому устройству.'),
+              _welcomeStep('3', 'Вы можете в любой момент закрыть это окно — программа продолжит работать.'),
+            ],
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(dctx).pop(),
+            child: const Text('Понятно'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<String> _getOrCreateMachineId() async {
