@@ -11,6 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+// `bind` is declared as a top-level getter in platform_model.dart
+// (`RustdeskImpl get bind => platformFFI.ffiBind;`). Import it from there —
+// NOT from common.dart, which uses bind but does not re-export it.
+import 'package:flutter_hbb/models/platform_model.dart' show bind;
 
 class AgentService {
   AgentService._();
@@ -37,6 +41,7 @@ class AgentService {
   int _inboxFailures = 0;
   bool _isGenericClient = false;
   bool _showPeerList = true; // build-time: admin can hide the operator list
+  String? _myId; // this device's own RustDesk ID (for the user to share)
 
   // Called from main() after app boots.
   Future<void> initialize({required String apiServer, String serviceKey = '', bool isGenericClient = false, bool showPeerList = true}) async {
@@ -46,6 +51,7 @@ class AgentService {
     _isGenericClient = isGenericClient;
     _showPeerList = showPeerList;
     _machineId = await _getOrCreateMachineId();
+    _fetchMyId();
 
     Future.delayed(kInitialHeartbeatDelay, _sendHeartbeat);
     _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) => _sendHeartbeat());
@@ -131,6 +137,7 @@ class AgentService {
               const Text('Эта программа подключена к вашей службе поддержки и уже настроена — ничего вводить вручную не нужно.',
                   style: TextStyle(fontSize: 14, height: 1.45)),
               const SizedBox(height: 16),
+              _myIdBanner(),
               _welcomeStep('1', 'Когда понадобится помощь — нажмите кнопку поддержки в окне программы.'),
               _welcomeStep('2', 'Специалист увидит запрос и подключится к этому устройству.'),
               _welcomeStep('3', 'Вы можете в любой момент закрыть это окно — программа продолжит работать.'),
@@ -167,6 +174,74 @@ class AgentService {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     final rng = Random.secure();
     return List.generate(32, (_) => chars[rng.nextInt(chars.length)]).join();
+  }
+
+  // ── This device's RustDesk ID ───────────────────────────────────────────────
+  // bind.mainGetMyId() can be empty right after boot (FFI not ready), so retry
+  // a few times with a small delay.
+  Future<void> _fetchMyId({int retries = 6}) async {
+    try {
+      final id = (await bind.mainGetMyId().timeout(const Duration(seconds: 3))).trim();
+      if (id.isNotEmpty) {
+        _myId = id;
+        return;
+      }
+    } catch (_) {}
+    if (retries > 0) {
+      Future.delayed(const Duration(seconds: 3), () => _fetchMyId(retries: retries - 1));
+    }
+  }
+
+  // Group digits in threes for readability (RustDesk IDs are numeric).
+  String _formatId(String id) {
+    final digits = id.replaceAll(RegExp(r'\s+'), '');
+    if (digits.length < 7 || int.tryParse(digits) == null) return id;
+    final buf = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) buf.write(' ');
+      buf.write(digits[i]);
+    }
+    return buf.toString();
+  }
+
+  void _copyMyId() {
+    final id = _myId;
+    if (id == null || id.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: id));
+  }
+
+  // A highlighted "Ваш ID: 123 456 789 [copy]" banner. Empty until the ID loads.
+  Widget _myIdBanner() {
+    final id = _myId;
+    if (id == null || id.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.badge_outlined, size: 18, color: Color(0xFF2563EB)),
+          const SizedBox(width: 8),
+          const Text('Ваш ID:', style: TextStyle(fontSize: 13, color: Color(0xFF475569))),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SelectableText(
+              _formatId(id),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF111827)),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy, size: 18),
+            tooltip: 'Копировать ID',
+            onPressed: _copyMyId,
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _sendHeartbeat() async {
@@ -744,6 +819,8 @@ class AgentService {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Your own ID — read it to the specialist so they can connect back.
+                _myIdBanner(),
                 // Mode toggle row — only shown if operator list is non-empty,
                 // this isn't a generic (unbranded) client, AND the admin left
                 // the peer list enabled at build time (show_peer_list).
